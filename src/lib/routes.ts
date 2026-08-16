@@ -36,16 +36,25 @@ export interface AppRoute {
  *                   BROWSER. It has an address of its own because it is the page somebody links to
  *                   when they are asked to prove the thing is real, and a section of a swap form
  *                   is not linkable.
+ *   `receipts`    — the Forge Receipts, which are the one thing on this surface that is somebody's
+ *                   PROMISE rather than somebody's code. It is separate from `contracts` for the
+ *                   reason it exists at all: `/contracts` proves that nobody can take your coins,
+ *                   and a receipt is the case where somebody already has them. Filing the two
+ *                   under one heading would let the second borrow the first's assurances. It is
+ *                   also the address a reader is sent to from the main site and from the network
+ *                   pages, on either network, and each has to be linkable on its own.
  *
  * There is deliberately no "add liquidity" page and no positions page. Both would need write paths
  * this surface has not built, and a menu entry that leads to an explanation of why the feature is
  * absent is worse than the feature being absent — it implies somebody decided against it rather
  * than that it has not been reached yet. §6 phase H of docs/ecosystem/39 scopes this surface to a
- * swap, a list and a proof.
+ * swap, a list and a proof; `receipts` is phase G's half of the same document, which §7 requires
+ * to have a surface of its own before anything is issued to anybody.
  */
 export const ROUTES: readonly AppRoute[] = [
   { path: '', label: 'Swap', wildcard: false },
   { path: 'pools', label: 'Pools', wildcard: true },
+  { path: 'receipts', label: 'Receipts', wildcard: false },
   { path: 'contracts', label: 'Contracts', wildcard: false },
 ]
 

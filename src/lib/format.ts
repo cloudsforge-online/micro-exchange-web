@@ -138,6 +138,67 @@ export function formatBlock(height: number | null): string {
   return height === null ? '—' : `#${formatCount(height)}`
 }
 
+/**
+ * How long ago something was, in the largest unit that is still a number.
+ *
+ * `seconds` is a difference the CALLER computed, so the clock is the caller's and this function is
+ * pure. That matters on the receipts page: the age of an attestation is the difference between the
+ * reader's own clock and a timestamp a chain wrote, and those two disagree — a node a few seconds
+ * ahead makes a fresh attestation come out negative, which is rendered as "just now" rather than as
+ * a duration with a minus sign in front of it.
+ *
+ * Never "0 seconds": an attestation recorded in the block being read is not an absence of time.
+ */
+export function formatAge(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '—'
+  if (seconds < 60) return 'just now'
+  return `${formatDuration(seconds)} ago`
+}
+
+/**
+ * A span of time, as a quantity rather than as a moment in the past.
+ *
+ * SEPARATE FROM `formatAge`, and not a `.replace(' ago', '')` on it. The two differ in more than a
+ * suffix: an age below a minute is "just now", which is a true and useful thing to say about when
+ * something happened and a false one to say about how long a contract waits before refusing to
+ * issue. A stale-after window of forty-five seconds rendered as "just now" would read as a broken
+ * page, and rendered as "0 minutes" would read as "immediately".
+ */
+export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const units: readonly (readonly [number, string])[] = [
+    [86400, 'day'],
+    [3600, 'hour'],
+    [60, 'minute'],
+    [1, 'second'],
+  ]
+  for (const [size, name] of units) {
+    if (seconds >= size) {
+      const n = Math.floor(seconds / size)
+      return `${formatCount(n)} ${name}${n === 1 ? '' : 's'}`
+    }
+  }
+  return '0 seconds'
+}
+
+/**
+ * A unix timestamp as UTC, to the minute.
+ *
+ * Beside `formatAge` rather than instead of it. An age is what a reader judges freshness by; a
+ * timestamp is what they compare with the other chain's block times when they go and check. Written
+ * out by hand rather than with `toLocaleString` so that it does not change shape between the
+ * reader's machine and the one somebody screenshots it on.
+ */
+export function formatUtc(unix: number): string {
+  if (!Number.isFinite(unix) || unix <= 0) return '—'
+  const d = new Date(unix * 1000)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
+  )
+}
+
 /* ── the sentences ─────────────────────────────────────────────────────────────────────────────
  *
  * Declared once for the reason the numbers are: this surface makes a small number of claims it must

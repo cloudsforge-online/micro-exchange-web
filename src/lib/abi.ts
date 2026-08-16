@@ -177,18 +177,91 @@ function utf8(hex: string): string | null {
   }
 }
 
+/**
+ * The string whose LENGTH WORD is at `lengthWord`, with its bytes in the words after it.
+ *
+ * Split out of `decodeStringAt` because a `string` inside an array is reached by a different
+ * arithmetic and must not be reached by a different DECODER — see `decodeStringArrayAt`, whose
+ * element offsets are relative to the array block rather than to the start of the data.
+ */
+function stringFromWord(data: string, lengthWord: number): string | null {
+  const length = decodeUintAt(data, lengthWord)
+  if (length === null || length > 4096n) return null
+  const bare = data.startsWith('0x') ? data.slice(2) : data
+  const start = (lengthWord + 1) * 64
+  const end = start + Number(length) * 2
+  if (bare.length < end) return null
+  return utf8(bare.slice(start, end))
+}
+
 /** A `string` whose head is in slot `index`, or null. */
 export function decodeStringAt(data: string | null, index: number): string | null {
+  if (data === null) return null
+  const offset = decodeUintAt(data, index)
+  if (offset === null || offset % 32n !== 0n) return null
+  return stringFromWord(data, Number(offset / 32n))
+}
+
+/**
+ * The `bytes32` in slot `index`, as `0x` + 64 hex digits, or null.
+ *
+ * ── READ THE SLOT YOU MEAN, NOT THE LAST ONE ─────────────────────────────────────────────────
+ *
+ * There is a helper for this rather than a `wordAt` at each call site because of a bug that had
+ * already been shipped once. `redemption(uint256)` returns FIVE values, one of which — the payout
+ * address — is a `string`, so the return is a five-word head followed by that string's tail. The
+ * settled transaction id is head word 4 and is emphatically not the last word of the data;
+ * `deploy/scripts/hearth-receipt-deploy.js` read it from the end and printed a txid of
+ * `0x6338643261353264623500…`, which is the ASCII of the last ten characters of the payout address,
+ * and then reported a settlement failure against a settlement that was correct on chain. A verifier
+ * that cries wolf about a good settlement is worse than no verifier: the next real one gets waved
+ * past. So the index is always named, and `receipts.ts` names it with the tuple beside it.
+ *
+ * Lower-cased and zero-padded, because it is compared with `0x00…0` to mean "not settled" and a
+ * comparison against a hash whose case came from the node is a comparison that works until it does
+ * not.
+ */
+export function decodeBytes32At(data: string | null, index: number): string | null {
+  if (data === null) return null
+  const word = wordAt(data, index)
+  if (word === null) return null
+  if (!/^[0-9a-fA-F]{64}$/.test(word)) return null
+  return `0x${word.toLowerCase()}`
+}
+
+/**
+ * A `string[]` whose head is in slot `index`, or null.
+ *
+ * TWO LEVELS OF OFFSET, and that is the whole difficulty. The head word points at the array, whose
+ * first word is a length; each of the next `length` words is itself an offset — RELATIVE TO THE
+ * START OF THE ARRAY BLOCK, not to the start of the data — pointing at that element's own length
+ * word. A decoder that treats the element offsets as absolute reads the right shape from the wrong
+ * place, which on this surface means printing somebody else's Litecoin address as the one holding
+ * the reserve. That is not a display bug; it is an audit sent to the wrong chain.
+ *
+ * Null, never a short list: a `reserveAddresses()` that decodes two of three entries would render
+ * as a reserve list with an address missing, and the whole point of the list is that it is complete.
+ */
+export function decodeStringArrayAt(data: string | null, index: number): string[] | null {
+  if (data === null) return null
   const offset = decodeUintAt(data, index)
   if (offset === null || offset % 32n !== 0n) return null
   const base = Number(offset / 32n)
   const length = decodeUintAt(data, base)
-  if (length === null || length > 4096n) return null
-  const bare = (data ?? '').startsWith('0x') ? (data as string).slice(2) : (data ?? '')
-  const start = (base + 1) * 64
-  const end = start + Number(length) * 2
-  if (bare.length < end) return null
-  return utf8(bare.slice(start, end))
+  // The published reserve list is a handful of addresses. A length word in the thousands is a
+  // decode that has wandered, and allocating on it is not a thing to do with somebody else's bytes.
+  if (length === null || length > 256n) return null
+  const out: string[] = []
+  for (let i = 0; i < Number(length); i += 1) {
+    const at = decodeUintAt(data, base + 1 + i)
+    if (at === null || at % 32n !== 0n) return null
+    // Measured from `base + 1`: the array block starts at its length word, and each element's
+    // offset counts from the word AFTER it — the first of the element-offset words.
+    const item = stringFromWord(data, base + 1 + Number(at / 32n))
+    if (item === null) return null
+    out.push(item)
+  }
+  return out
 }
 
 /**
@@ -307,4 +380,23 @@ export const SIG = Object.freeze({
   // Wrapping, for the native coin.
   deposit: 'deposit()',
   withdraw: 'withdraw(uint256)',
+  // ── ForgeReceipt, the custodial receipt token ────────────────────────────────────────────────
+  //
+  // EVERY ONE OF THESE IS A VIEW. There is no `attest`, no `issue` and no `settleRedemption` in
+  // this table, and their absence is the point: those are the issuer's calls, they are made from a
+  // multisig on a machine that holds keys, and a browser bundle that knew how to encode them would
+  // be a browser bundle one stolen session away from looking like it could make them. `redeem` is
+  // absent for a different reason — it is the holder's exit and it belongs on this surface
+  // eventually, but nothing here builds it yet and a signature with no call site is a promise.
+  name: 'name()',
+  underlying: 'underlying()',
+  issuerStatement: 'issuerStatement()',
+  issuer: 'issuer()',
+  coverage: 'coverage()',
+  attestation: 'attestation()',
+  maxAttestationAge: 'maxAttestationAge()',
+  reserveAddresses: 'reserveAddresses()',
+  redemptionCount: 'redemptionCount()',
+  redemption: 'redemption(uint256)',
+  unsettledRedemptions: 'unsettledRedemptions()',
 })

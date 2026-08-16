@@ -37,6 +37,7 @@ import { ContractsPage } from './pages/contracts.tsx'
 import { NotFoundPage } from './pages/not-found.tsx'
 import { PoolPage } from './pages/pool.tsx'
 import { PoolsPage } from './pages/pools.tsx'
+import { ReceiptsPage } from './pages/receipts.tsx'
 import { SwapPage } from './pages/swap.tsx'
 
 export function App() {
@@ -57,6 +58,10 @@ export function App() {
             */}
             <Route path="pools" element={<PoolsPage />} />
             <Route path="pools/:pair" element={<PoolPage />} />
+            {/* The receipts are their own address, not a section of `/contracts`: that page proves
+                nobody can take your coins, and a receipt is the case where somebody already has
+                them. They also have to be linkable per network from the main site. */}
+            <Route path="receipts" element={<ReceiptsPage />} />
             <Route path="contracts" element={<ContractsPage />} />
             {/* Unknown paths render inside the shell, so the reader keeps the navigation they need
                 to get back out — under a real 404, which nginx.conf preserves. */}

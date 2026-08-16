@@ -40,6 +40,7 @@ import {
   sortTokens,
   type Deployment,
 } from '../src/lib/dex.ts'
+import { receiptsFor } from '../src/lib/receipts.ts'
 import type { Reply, Routes, Wire } from './dom.ts'
 
 /* ── the deployment these fixtures are a chain for ─────────────────────────────────────────── */
@@ -120,6 +121,62 @@ function uintArrayReturn(values: readonly bigint[]): string {
   return returns(uintWord(32n), uintWord(BigInt(values.length)), ...values.map(uintWord))
 }
 
+/** One string's own encoding: its byte length, and its bytes right-padded to whole words. */
+function stringBody(text: string): { readonly length: bigint; readonly chunks: string[] } {
+  const encoded = [...new TextEncoder().encode(text)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+  const chunks: string[] = []
+  for (let i = 0; i < encoded.length; i += 64) chunks.push(encoded.slice(i, i + 64).padEnd(64, '0'))
+  if (chunks.length === 0) chunks.push('0'.repeat(64))
+  return { length: BigInt(encoded.length / 2), chunks }
+}
+
+/**
+ * A `string[]` return — TWO levels of offset, which is the whole reason it is written out here.
+ *
+ * The head holds one offset to the array. At that offset sits the length, then one offset PER
+ * ELEMENT, and each of those is measured from the first of the element-offset words rather than
+ * from the start of the return data. A decoder that resolves an element offset absolutely reads
+ * somebody else's bytes and produces a plausible-looking address, which is exactly the class of
+ * failure this surface must not have on a page about where the money is. `reserveAddresses()` is
+ * the only call on this surface with this shape, so this is the only fixture that can catch it.
+ */
+function stringArrayReturn(items: readonly string[]): string {
+  const bodies = items.map(stringBody)
+  const offsets: string[] = []
+  const tail: string[] = []
+  let cursor = items.length * 32
+  for (const body of bodies) {
+    offsets.push(uintWord(BigInt(cursor)))
+    tail.push(uintWord(body.length), ...body.chunks)
+    cursor += 32 + body.chunks.length * 32
+  }
+  return returns(uintWord(32n), uintWord(BigInt(items.length)), ...offsets, ...tail)
+}
+
+/**
+ * `redemption(uint256)` — `(address, uint256, string, uint64, bytes32)`.
+ *
+ * A FIVE-WORD HEAD FOLLOWED BY THE STRING'S TAIL, which means the settled transaction id is head
+ * word 4 and the LAST word of this data is text. `deploy/scripts/hearth-receipt-deploy.js` read it
+ * from the end once and reported a settlement failure against a settlement that was correct on
+ * chain. This encoder is written from the ABI spec rather than from the decoder, so a decoder that
+ * goes back to reading the last word gets the ASCII rather than agreeing with itself.
+ */
+function redemptionReturn(row: FixtureRedemption): string {
+  const body = stringBody(row.payoutAddress)
+  return returns(
+    addressWord(row.holder),
+    uintWord(row.amount),
+    uintWord(BigInt(5 * 32)),
+    uintWord(BigInt(row.requestedAt)),
+    bytesWord(row.settledTxid ?? '0x0'),
+    uintWord(body.length),
+    ...body.chunks,
+  )
+}
+
 /* ── reading the calldata back ─────────────────────────────────────────────────────────────── */
 
 const argWord = (data: string, index: number): string =>
@@ -172,6 +229,43 @@ export interface FixturePair {
   readonly totalSupply: bigint | null
 }
 
+/** One redemption in a receipt's book. `settledTxid: null` is burnt and not yet paid. */
+export interface FixtureRedemption {
+  readonly holder: string
+  readonly amount: bigint
+  readonly payoutAddress: string
+  readonly requestedAt: number
+  readonly settledTxid: string | null
+}
+
+/**
+ * A `ForgeReceipt`, as the wire sees it.
+ *
+ * `fresh` is NOT a field. It is derived below from `attestedAt`, `maxAge` and the fixture's chain
+ * clock, exactly as `attestationIsFresh()` derives it on chain — a scenario that could set it
+ * independently of the timestamps could describe a chain that cannot exist, and the page reads the
+ * contract's answer precisely so that it is not doing this arithmetic itself.
+ */
+export interface FixtureReceipt {
+  readonly address: string
+  readonly name: string
+  readonly symbol: string
+  readonly decimals: number
+  readonly underlying: string
+  readonly statement: string
+  readonly issuer: string
+  readonly supply: bigint
+  readonly reserve: bigint
+  /** The height on the UNDERLYING chain the reserve was read at. Zero means never attested. */
+  readonly height: bigint
+  /** This chain's timestamp when it was recorded. Zero means never attested. */
+  readonly attestedAt: bigint
+  readonly maxAge: bigint
+  readonly reference: string
+  readonly reserveAddresses: readonly string[]
+  readonly redemptions: readonly FixtureRedemption[]
+}
+
 /* ── the tokens these scenarios trade ──────────────────────────────────────────────────────── */
 
 /** The wrapped native coin, at the deployment's own address so the router's boundary is real. */
@@ -216,6 +310,98 @@ export const FEE_SETTER = '0x2d84c1f905e63b7a08fd41c29e7b6350a1d8f4e2'
  * "some other address" is the whole of what that means.
  */
 export const IMPOSTOR_PAIR = '0x3e91c05a7bd248f60193ac5e8f2b47d09c6a1e83'
+
+/* ── the receipts ──────────────────────────────────────────────────────────────────────────── */
+
+/** The chain `src/lib/receipts.ts` holds receipts for. Not Hearth mainnet, deliberately. */
+export const RECEIPT_CHAIN_ID = 7412
+
+/**
+ * The two rows, read out of the app's own table for the reason `HEARTH` is.
+ *
+ * A fixture that wrote the addresses down would keep passing after the table moved, and the page
+ * would be reading contracts nothing here models while the suite stayed green — the `unmodelled`
+ * list would catch that, but only in the scenarios that assert on it. Reading the table makes it
+ * impossible instead of merely detectable.
+ */
+const issuedRow = receiptsFor(RECEIPT_CHAIN_ID).find((row) => row.kind === 'issued')
+const drillRow = receiptsFor(RECEIPT_CHAIN_ID).find((row) => row.kind === 'drill')
+if (issuedRow === undefined || drillRow === undefined) {
+  throw new Error(
+    `test/fixtures.ts models an issued receipt and a drill on chain ${RECEIPT_CHAIN_ID}, and ` +
+      `src/lib/receipts.ts no longer holds both`,
+  )
+}
+
+/**
+ * The chain's clock, for judging an attestation's age.
+ *
+ * A FIXED NUMBER. Freshness in a scenario is decided by the scenario, not by when the suite happens
+ * to run: a fixture that read the wall clock would make `stale` untestable and `fresh` pass forever,
+ * which is the same test either way.
+ */
+export const CHAIN_NOW = 1_786_838_400
+
+/** Whoever may attest, issue and settle: the 2-of-3 multisig, in the shape of an address. */
+export const ISSUER = '0x51faced76d70981e863be2987ccc811b0712e4f8'
+
+/**
+ * fLTC — attested, fully covered, and holding a reserve of zero because it has issued nothing.
+ *
+ * THE RESERVE ADDRESSES HERE ARE INVENTED, and that is not laziness. The real ones are published by
+ * the contract and read off it at runtime, which is the entire argument of `src/lib/receipts.ts`;
+ * writing them into a test would be the second copy that module exists to avoid, and it would go
+ * stale silently the first time custody rotates a key.
+ */
+export const FLTC: FixtureReceipt = {
+  address: issuedRow.address,
+  name: 'Forge Receipt: Litecoin',
+  symbol: issuedRow.symbol,
+  decimals: 8,
+  underlying: issuedRow.underlying,
+  statement:
+    'CloudsForge holds the Litecoin backing this token. This is a promise by CloudsForge, not a ' +
+    'trustless peg.',
+  issuer: ISSUER,
+  supply: 0n,
+  reserve: 0n,
+  height: 3_161_026n,
+  attestedAt: BigInt(CHAIN_NOW - 3_600),
+  maxAge: 86_400n,
+  reference: '0x9173116ba259641a250352ad99dfcdf3a49a996e9cbc1cf3976c313ad1a785eb',
+  reserveAddresses: ['ltc1qfixtureaddressone', 'ltc1qfixtureaddresstwo'],
+  redemptions: [],
+}
+
+/** The drill: attested, issued, burnt by a holder, paid for real, and settled with the txid. */
+export const DEMBER: FixtureReceipt = {
+  address: drillRow.address,
+  name: 'Drill Receipt: EMBER',
+  symbol: drillRow.symbol,
+  decimals: 18,
+  underlying: drillRow.underlying,
+  statement: 'A test instrument on a test chain. Nobody should hold one.',
+  issuer: ISSUER,
+  supply: 0n,
+  reserve: 1_000n,
+  height: 19_380n,
+  attestedAt: BigInt(CHAIN_NOW - 7_200),
+  maxAge: 86_400n,
+  reference: '0x00000000000000000000000000000000000000000000000000000000646d3131',
+  // An address on THIS chain, because the drill's underlying is this chain's own coin. That is what
+  // makes its `checkWith` null in the table: the check is a balance read on the estate's own
+  // explorer, not a scan of another chain's unspent outputs, and the page has to say which.
+  reserveAddresses: [ISSUER],
+  redemptions: [
+    {
+      holder: HOLDER,
+      amount: 1_000n,
+      payoutAddress: HOLDER,
+      requestedAt: CHAIN_NOW - 6_000,
+      settledTxid: '0x4d1c0f8a2be7534619ad0c53f8b27e410956dfa3c8e1b70425d9f6031a8c74be',
+    },
+  ],
+}
 
 /* ── building a market ─────────────────────────────────────────────────────────────────────── */
 
@@ -291,6 +477,23 @@ export interface ChainOptions {
   readonly allowances?: Readonly<Record<string, bigint>>
   /** `eth_getBalance` answers, keyed by owner. */
   readonly native?: Readonly<Record<string, bigint>>
+  /**
+   * The `ForgeReceipt`s standing at their table addresses. Empty by default.
+   *
+   * Empty is the honest default: 7411 carries no receipt, and a fixture that put one everywhere
+   * would make the absence — the state the receipts page spends most of its screen on — the harder
+   * one to write a scenario for.
+   */
+  readonly receipts?: readonly FixtureReceipt[]
+  /**
+   * The chain's own timestamp, which is what decides whether an attestation is fresh.
+   *
+   * `attestationIsFresh()` is `at != 0 && block.timestamp <= at + maxAttestationAge`, evaluated by
+   * the NODE. The page reads that boolean rather than computing it, so a scenario makes a receipt
+   * stale by moving this forward — not by setting a flag, which could describe a chain that cannot
+   * exist.
+   */
+  readonly now?: number
   /** JSON-RPC methods the node refuses, for the read-did-not-come-back scenarios. */
   readonly refuses?: readonly string[]
 }
@@ -331,6 +534,8 @@ export function chain(options: ChainOptions = {}): ChainFixture {
   const balances = options.balances ?? {}
   const allowances = options.allowances ?? {}
   const native = options.native ?? {}
+  const receipts = options.receipts ?? []
+  const now = options.now ?? CHAIN_NOW
   const unmodelled: string[] = []
 
   /** Every token any pool here holds, by address. */
@@ -342,6 +547,13 @@ export function chain(options: ChainOptions = {}): ChainFixture {
 
   const pairAt = (address: string): FixturePair | undefined =>
     pairs.find((p) => p.address === address.toLowerCase())
+
+  const receiptAt = (address: string): FixtureReceipt | undefined =>
+    receipts.find((r) => r.address.toLowerCase() === address.toLowerCase())
+
+  /** The contract's own rule, transcribed: never fresh when it has never been attested. */
+  const isFresh = (receipt: FixtureReceipt): boolean =>
+    receipt.attestedAt !== 0n && BigInt(now) <= receipt.attestedAt + receipt.maxAge
 
   const pairOf = (a: string, b: string): FixturePair | undefined => {
     const [token0, token1] = sortTokens(a, b)
@@ -428,6 +640,61 @@ export function chain(options: ChainOptions = {}): ChainFixture {
       if (is(data, SIG.token1)) return returns(addressWord(pair.token1.address))
       if (is(data, SIG.totalSupply)) {
         return pair.totalSupply === null ? null : returns(uintWord(pair.totalSupply))
+      }
+    }
+
+    // BEFORE the token branch, and it falls through to it. A receipt IS an ERC-20, so a scenario
+    // could put one in a pool; where both know an answer the receipt's own model is the right one,
+    // and `balanceOf`/`allowance` — which this branch does not carry — reach the token branch below.
+    const receipt = receiptAt(at)
+    if (receipt !== undefined) {
+      if (is(data, SIG.name)) return stringReturn(receipt.name)
+      if (is(data, SIG.symbol)) return stringReturn(receipt.symbol)
+      if (is(data, SIG.decimals)) return returns(uintWord(BigInt(receipt.decimals)))
+      if (is(data, SIG.underlying)) return stringReturn(receipt.underlying)
+      if (is(data, SIG.issuerStatement)) return stringReturn(receipt.statement)
+      if (is(data, SIG.issuer)) return returns(addressWord(receipt.issuer))
+      // Five STATIC words: (supply, reserve, height, at, fresh). A fixture that returned four would
+      // let a decoder reading `fresh` out of the wrong slot pass, and `fresh` is the one field on
+      // this page that says whether the rest of it can be believed.
+      if (is(data, SIG.coverage)) {
+        return returns(
+          uintWord(receipt.supply),
+          uintWord(receipt.reserve),
+          uintWord(receipt.height),
+          uintWord(receipt.attestedAt),
+          uintWord(isFresh(receipt) ? 1n : 0n),
+        )
+      }
+      // The struct's generated getter: (reserve, height, at, ref). It overlaps `coverage` in three
+      // of its four words on purpose — the page reads both, and reading the reference out of the
+      // wrong one of them is the mistake this shape exists to expose.
+      if (is(data, SIG.attestation)) {
+        return returns(
+          uintWord(receipt.reserve),
+          uintWord(receipt.height),
+          uintWord(receipt.attestedAt),
+          bytesWord(receipt.reference),
+        )
+      }
+      if (is(data, SIG.maxAttestationAge)) return returns(uintWord(receipt.maxAge))
+      if (is(data, SIG.reserveAddresses)) return stringArrayReturn(receipt.reserveAddresses)
+      if (is(data, SIG.redemptionCount)) {
+        return returns(uintWord(BigInt(receipt.redemptions.length)))
+      }
+      if (is(data, SIG.redemption)) {
+        // Out of range REVERTS on chain — the array access does — so null is the honest answer and
+        // not a miss. Recording it as unmodelled would report a page reading past the end as a gap
+        // in this fixture rather than as the bug it is.
+        const row = receipt.redemptions[Number(argUint(data, 0))]
+        return row === undefined ? null : redemptionReturn(row)
+      }
+      if (is(data, SIG.unsettledRedemptions)) {
+        const owing = receipt.redemptions.filter((row) => row.settledTxid === null)
+        return returns(
+          uintWord(BigInt(owing.length)),
+          uintWord(owing.reduce((sum, row) => sum + row.amount, 0n)),
+        )
       }
     }
 
