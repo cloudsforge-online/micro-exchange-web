@@ -63,8 +63,21 @@ if (found === null) {
 }
 export const HEARTH: Deployment = found
 
-/** A chain the exchange is not on. Hearth testnet's id, which is a real number and not a made-up one. */
-export const OTHER_CHAIN_ID = 7412
+/**
+ * A chain the exchange is not on.
+ *
+ * Ethereum mainnet, and it used to be Hearth testnet — which was wrong from the day it was written,
+ * because 7412 has run Forge Exchange since phase D. A fixture named "not on" has to name a chain
+ * that is genuinely not in `DEPLOYMENTS`, and 1 is the chain nothing in this estate will ever
+ * deploy to. The assertion below keeps it that way rather than trusting this comment.
+ */
+export const OTHER_CHAIN_ID = 1
+if (deploymentFor(OTHER_CHAIN_ID) !== null) {
+  throw new Error(
+    `test/fixtures.ts uses chain ${OTHER_CHAIN_ID} as "a chain the exchange is not on", and ` +
+      `src/lib/dex.ts now holds a deployment for it`,
+  )
+}
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 

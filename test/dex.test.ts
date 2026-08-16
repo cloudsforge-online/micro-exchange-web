@@ -233,14 +233,26 @@ test('TOKENS SORT BY UNSIGNED NUMERIC VALUE, NOT BY THE STRING', () => {
 })
 
 test('THE DEPLOYMENT TABLE IS KEYED BY CHAIN ID, AND HAS EXACTLY THE CHAINS IT HAS', () => {
-  // Chain 7411 is Hearth mainnet. Hearth TESTNET has no Forge Exchange — phase F was mainnet-only
-  // and deliberately so — and a speculative testnet row here would render a swap form against
-  // contracts that are not there. `null` is a state this surface renders as a sentence.
-  assert.deepEqual(DEPLOYMENTS.map((d) => d.chainId), [7411])
+  // Both Hearths run Forge Exchange, at DIFFERENT addresses: 7411 since 2026-08-15 (phase F) and
+  // 7412 since 2026-08-11 (phase D). The list has to be exactly as long as the truth in both
+  // directions — a row too many renders a swap form against contracts that are not there, and a row
+  // too few tells a reader the exchange is not on a chain whose pool they can see on the explorer.
+  // Anything else gets `null`, which this surface renders as a sentence rather than an error.
+  assert.deepEqual(DEPLOYMENTS.map((d) => d.chainId), [7411, 7412])
   assert.equal(deploymentFor(7411)?.chainName, 'Hearth')
-  assert.equal(deploymentFor(7412), null)
+  assert.equal(deploymentFor(7412)?.chainName, 'Hearth Testnet')
   assert.equal(deploymentFor(1), null)
   assert.equal(deploymentFor(null), null)
+
+  // And they are two deployments, not one address set written twice. Every address differs; the
+  // init code hash does NOT, and must not — the pair contract is the same and `bytecodeHash:
+  // 'none'` means editing the factory cannot perturb it, which is what lets one constant derive the
+  // live pair on both chains.
+  const [main, test_] = DEPLOYMENTS
+  for (const field of ['factory', 'router', 'wrapped', 'multicall'] as const) {
+    assert.notEqual(main[field], test_[field], `${field} is the same address on both chains`)
+  }
+  assert.equal(main.initCodeHash, test_.initCodeHash)
 
   // Every address is lower-case hex of the right length. A checksummed one would compare unequal to
   // what the node returns from `getPair()`, which is how a page reports a canonical pair as an

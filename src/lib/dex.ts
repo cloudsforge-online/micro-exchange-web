@@ -65,12 +65,27 @@ export interface Deployment {
 /**
  * Every chain this surface knows the exchange on.
  *
- * ONE ENTRY, and the honesty of the page depends on it staying exactly as long as the truth is.
- * Chain 7411 is Hearth mainnet, deployed 2026-08-15 (docs/ecosystem/39 §6 phase F). Hearth testnet
- * has NO Forge Exchange deployment — phase F was mainnet-only and deliberately so — and adding a
- * speculative testnet row here would make the Testnet switch render a swap form against contracts
- * that are not there. A reader who presses Testnet is told there is no exchange on it, which is
- * true, and that is a better page than a form whose every quote fails.
+ * TWO ENTRIES, and the honesty of the page depends on the list being exactly as long as the truth
+ * is — in both directions. A row for a chain with no deployment renders a swap form against
+ * contracts that are not there, and every quote on it fails. A MISSING row for a chain that does
+ * have one tells a reader "Forge Exchange is not deployed on this network" about a market they can
+ * see on the explorer, which is the same lie with the sign flipped, and it is the one this file
+ * shipped with: the comment here said phase F was mainnet-only, and phase D had already put the
+ * full set on 7412 four days earlier.
+ *
+ * Both rows were re-read from the node before being written down rather than copied out of a
+ * deployment note (docs/ecosystem/39 §5 makes that the rule, and §6 phase E is what happens when
+ * you do it): `factory.allPairsLength()`, `router.factory()`, `router.WETH()` and
+ * `multicall3.getChainId()` all answer as below, and on each chain the one live pair recomputed by
+ * CREATE2 from `initCodeHash` equals `factory.allPairs(0)` exactly — trap 1, checked rather than
+ * asserted. The block numbers were found by bisecting `eth_getCode`, so they are the block each
+ * address first had code in, not the block a script logged.
+ *
+ * The two deployments are NOT the same bytecode. 7412 predates the factory and multisig fixes from
+ * §6 phase E; 7411 was deployed from `main` afterwards. `initCodeHash` is identical anyway, and has
+ * to be — the pair contract did not change, and `bytecodeHash: 'none'` means editing the factory
+ * cannot perturb it — which is why one constant serves both rows and why the derivation above still
+ * lands on the deployed pair on each chain.
  */
 export const DEPLOYMENTS: readonly Deployment[] = Object.freeze([
   Object.freeze({
@@ -83,6 +98,20 @@ export const DEPLOYMENTS: readonly Deployment[] = Object.freeze([
     initCodeHash: '0x46b4122ae9db4a03c913cfbed4e6321064741545c60aafe3ed9410be7657a537',
     multicall: '0xe1636b08ff1edde24b2642a3cb388d4e97dfe0bc',
     blocks: Object.freeze({ factory: 38843, router: 38845, wrapped: 38841, multicall: 38847 }),
+  }),
+  Object.freeze({
+    // Deployed 2026-08-11 from block 14121 (docs/ecosystem/39 §6 phase D; hearth/contracts/README).
+    // The name is what the network switcher calls this chain everywhere else in the estate, so a
+    // reader who arrived through the switcher sees the word they pressed.
+    chainId: 7412,
+    chainName: 'Hearth Testnet',
+    nativeSymbol: 'EMBER',
+    factory: '0x18bbd09d51f4e9e630dd0a86fc984b6326f10e41',
+    router: '0xba2b9db822e1f2ec3039fe474644b8405268a9b4',
+    wrapped: '0xa26dfebc362a380e1ade6090c7c5887180d1b263',
+    initCodeHash: '0x46b4122ae9db4a03c913cfbed4e6321064741545c60aafe3ed9410be7657a537',
+    multicall: '0x76db8cdcaf4a517a51ae474bd00cfe9a53635c03',
+    blocks: Object.freeze({ factory: 14122, router: 14124, wrapped: 14121, multicall: 14128 }),
   }),
 ])
 
