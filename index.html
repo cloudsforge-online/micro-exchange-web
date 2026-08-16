@@ -1,0 +1,140 @@
+<!doctype html>
+<!--
+  data-cf-product picks the accent ramp and data-cf-substrate the ash ramp, both from
+  @cloudsforge/ui/tokens.css. They are on <html> and set STATICALLY here rather than by React,
+  because a page that paints before the attributes land flashes the default ember and then changes
+  colour.
+
+  'exchange' — and this was checked rather than assumed.
+
+  tokens.css declares a real `[data-cf-product='exchange']` block; the exchange shares the gold ramp
+  with `create` and `pool`, and has since the registry row was added. Naming a product with no block
+  would fall through to the company ember in complete silence, which tokens.css calls out by name —
+  "a silent fallthrough is a latent bug, so every key an app may set is declared". `admin` had that
+  defect and `explorer` still does. test/brand-chrome.test.ts asserts that the selector this file
+  names really exists upstream, which is the check that catches a fall-through either way.
+
+  'warm' is the ash ramp every product frontend in the estate uses.
+
+  data-cf-scheme is the third of the three, added with @cloudsforge/ui 1.1: `auto` follows the
+  reader's operating system. Set statically for the same reason as the other two.
+-->
+<html lang="en-GB" data-cf-product="exchange" data-cf-substrate="warm" data-cf-scheme="auto">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      `color-scheme`, spelled the way the standard spells it and not the way English does. It is not
+      a registered meta name under any other spelling, so a misspelling is inert rather than wrong —
+      explorer-web shipped `colour-scheme` for months and the browser drew light form controls on a
+      dark page the whole time. This surface has two `<select>`s, a text input and a set of radios on
+      the FIRST page a reader opens, so the same defect would be visible immediately here.
+
+      Both schemes, because data-cf-scheme="auto" above lets the token layer resolve whichever
+      palette the reader's system asks for; declaring only `dark` would leave the chrome the browser
+      draws disagreeing with the page around it.
+    -->
+    <meta name="color-scheme" content="dark light" />
+    <!--
+      The build that produced this bundle. Stamped by the Dockerfile, read by src/lib/obs.ts, and
+      the reason an error report can be pinned to the deploy that introduced it. It is an identity
+      rather than a configuration: it names the artefact, it does not tell it where it is running.
+    -->
+    <meta name="cf-release" content="dev" />
+    <!--
+      THE GOOGLE ANALYTICS MEASUREMENT ID, AND NOT THE GOOGLE ANALYTICS TAG.
+      ────────────────────────────────────────────────────────────────────────────────────────
+      There is deliberately no third-party analytics `<script src=…>` in this file and there must
+      never be one. The stock snippet fetches that script and sets a cookie on load, before any
+      banner has been drawn let alone answered; under ePrivacy Art. 5(3) an analytics cookie set
+      before consent is a violation that a banner underneath it does not cure.
+      `@cloudsforge/ui/consent` injects the tag from exactly one place: the Accept button in
+      `CookieBanner`.
+
+      It matters here for a reason particular to this surface. `/pools/<address>` names a market, and
+      a page view reported with its path attached tells a third party which pool a given browser
+      looked up — and this surface also asks a wallet for an account address. Analytics that fires
+      before consent, on a page where those two facts are one join away from each other, is how a
+      pseudonymous address stops being pseudonymous.
+
+      It is a meta tag rather than a build-time variable because test/no-build-time-config.test.ts
+      greps for those and fails the build — an artefact with an environment frozen into it is not
+      the artefact that passed CI. It is the same mechanism `cf-release` above already uses. An
+      absent or empty value means analytics is simply off, which is what a local `pnpm dev` gets.
+    -->
+    <meta name="cf-analytics" content="G-ZFBLKK519K" />
+
+    <!--
+      THE DESCRIPTION LEADS WITH WHAT THE EXCHANGE IS, AND THAT IS THE POINT OF IT.
+
+      This string is what a search result and a link preview show, and a link-preview fetcher does
+      not execute JavaScript — so this is frequently the ONLY sentence a stranger reads before
+      deciding whether this page is a venue with a desk behind it or a set of contracts on a chain.
+      That one fact decides whether everything else on the page is reassuring or alarming, so it
+      comes first, and the absence of custody comes with it.
+
+      It is byte-identical to SURFACE_DESCRIPTION in src/lib/hosts.ts, which is what the React app
+      writes into this same tag on every route, and test/seo.test.ts compares the two. Otherwise a
+      crawler that runs JavaScript and one that does not would read two different descriptions of
+      the same page, and the honest one would be whichever nobody remembered to update.
+    -->
+    <meta
+      name="description"
+      content="Swap EMBER and Forge Create tokens against constant-product pools on Hearth. The contracts hold the liquidity, your own wallet signs every trade, and CloudsForge never holds your coins."
+    />
+
+    <!--
+      Brand chrome copied BYTE-IDENTICAL from brand/assets/site/ — test/brand-chrome.test.ts
+      compares the bytes in both directions.
+
+      THE COMPANY'S SET, NOT ANOTHER PRODUCT'S, AND THAT IS THE DECISION.
+
+      micro-brand has no `exchange` set: there is no brand/assets/exchange/ directory and no
+      `exchange` entry in brand/plan.ts. Generating one from a frontend repository is the one place
+      brand assets must never come from, so something has to be borrowed — and every remaining
+      candidate except the parent is ANOTHER PRODUCT'S MARK. Forge Create's struck spark on a Forge
+      Exchange link preview does not read as "no card yet", it reads as Forge Create; Forge Network's
+      would say this is chain infrastructure, which the pool and the explorer can say and a
+      registered product with its own accent ramp cannot. CloudsForge's own ridge-and-flame is the
+      one card in micro-brand that is true of every surface the estate serves.
+
+      test/brand-chrome.test.ts asserts that brand/assets/exchange/ does NOT exist, so the day
+      micro-brand generates one is the day a test tells somebody to come back here.
+
+      THERE IS NO MARK AND NO WORDMARK. Favicons and an og card are the two artefacts a separate
+      hostname needs, because "a browser tab and a shared link inherit nothing" (brand/plan.ts).
+      Nothing here links a mark, nothing in src renders one, and the test asserts the absence so that
+      adding one later is a decision rather than a reflex.
+    -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512x512.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/favicon-192x192.png" />
+
+    <!--
+      ONE og block, not two. foresight-web/index.html declares og:type, og:title and og:description
+      twice — the second set silently wins in every crawler and the first is dead text nobody edits.
+      Reported there; not repeated here, and test/brand-chrome.test.ts counts each property.
+
+      The image is a RELATIVE path so the card resolves against whichever origin served the page,
+      which is the same rule the rest of this bundle follows for hosts.
+
+      The card says the trade is signed by the reader's own wallet before it says anything else, for
+      the same reason the meta description does — and more so, because a card is read WITHOUT the
+      surrounding page and is the easiest place on the whole surface to imply an account by accident.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Forge Exchange" />
+    <meta
+      property="og:description"
+      content="A constant-product exchange on Hearth. Anyone can create a market for any token, your own wallet signs every trade, and nothing here is custodied by CloudsForge."
+    />
+    <meta property="og:image" content="/og-1200x630.png" />
+
+    <title>Forge Exchange</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

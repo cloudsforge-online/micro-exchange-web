@@ -1,0 +1,562 @@
+# Continuous integration.
+#
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+# THE `check` AND `image` JOBS ARE TEMPORARY, exactly as they are in `micro-explorer-web`,
+# `micro-admin-web`, `micro-mint-web`, `micro-trade-web`, `micro-pool-web` and `micro-hub-web`. The
+# org's reusable `web-ci.yml` is the target and the `hygiene` and `publish` jobs already call the
+# org repository; the two local jobs exist for one reason and disappear with it:
+#
+#   @cloudsforge/ui is unpublished, and this repository consumes it as `link:../ui/packages/ui`.
+#   The reusable workflow does a single checkout and then `pnpm install --frozen-lockfile`, which
+#   cannot resolve a sibling directory that is not there.
+#
+# ONE INPUT OF THE REUSABLE WORKFLOW WILL STILL NOT SUIT THIS REPOSITORY, and it is the same
+# exception explorer-web takes: its `image` job probes a deep route and requires a 200 for ANY
+# address. This app's nginx.conf enumerates its real routes and answers 404 for everything else ON
+# PURPOSE, so the image is probed here, where the honest answer can be asserted as well as the deep
+# link. `/swap` returning 404 is a product requirement on this surface, not an accident — the swap
+# is the index route, and an address a reader guesses must not silently succeed.
+#
+# THERE IS NO SERVICE CHECKOUT HERE, AND THAT IS THE DIFFERENCE FROM EVERY SIBLING FRONTEND.
+# micro-pool-web checks out micro-pool to keep its response shapes honest. This bundle has no such
+# repository to check out: there is no `micro-exchange`. Its counterparty is a set of contracts on
+# chain 7411, and the equivalent of a response-shape test is `test/dex.test.ts` — which pins the
+# arithmetic against `UniswapV2Library`'s formulae, and says plainly in its own header that nobody
+# has replayed a mainnet fill into it.
+#
+# THE SIBLING CHECKOUTS THAT REMAIN ARE NOT DECORATION. Two of this repository's tests cross-check
+# another repository and SKIP when it is absent, so that `pnpm test` passes for somebody who cloned
+# only this one. A skipped test is an unmeasured one, so on the runner the absence has to be fatal —
+# otherwise a checkout that silently produced nothing looks exactly like a green cross-check. The
+# "were actually checked" step below is what makes that so.
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    # `release/**` builds too. A release branch carries the estate-wide version bump and has to
+    # publish its images before testnet can be deployed from it.
+    branches: [main, 'design-system/**', 'release/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: exchange-web }
+
+      # The design system, consumed as `link:../ui/packages/ui`.
+      #
+      # `|| github.token` and not a bare secret. Measured on 2026-08-09 on a sibling repository:
+      # it was new, ESTATE_READ_TOKEN had not been set on it yet, and
+      # `token: ${{ secrets.ESTATE_READ_TOKEN }}` resolved to the EMPTY STRING — which
+      # actions/checkout does not treat as "use the default", it treats as a supplied-but-invalid
+      # input and dies with `Input required and not supplied: token` before it has said which
+      # repository it was trying to read. The named secret stays first because it is the estate's
+      # convention and because these siblings were private until recently; the fallback is what
+      # micro-org's own publish-image.yml does, for the reason its comment gives: it "falls back to
+      # the job token, which is enough while those repositories are public".
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-ui
+          path: ui
+          token: ${{ secrets.ESTATE_READ_TOKEN || github.token }}
+
+      # micro-brand, for test/brand-chrome.test.ts. The favicons and the og card in public/ are
+      # COPIES of CloudsForge's own, and a copy that is never compared is a copy that drifts. That
+      # test also asserts `brand/assets/exchange/` does NOT exist — the day micro-brand generates a
+      # set for this surface, the borrow stops being the right answer and a test says so.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-brand
+          path: brand
+          token: ${{ secrets.ESTATE_READ_TOKEN || github.token }}
+
+      # micro-site, for the footer's legal links in test/shared-chrome.test.ts. `CloudsForgeFooter`
+      # composes `/legal/terms` and friends itself, from the registry, so nothing in THIS repository
+      # would notice a path that stopped resolving — status-web paid for exactly that with two
+      # footer links broken from the day they were written.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-site
+          path: site
+          token: ${{ secrets.ESTATE_READ_TOKEN || github.token }}
+
+      # Pinned, because the checkout lives at exchange-web/ and the action looks for the
+      # packageManager field in the workspace root, where there is no package.json.
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.9.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: exchange-web/pnpm-lock.yaml }
+
+      # `link:` resolves to the sibling's own node_modules, so the design system must be installed
+      # before this repository is — without this, `tsc` cannot resolve ../ui's own imports when it
+      # typechecks the linked sources.
+      - name: Install the sibling design system
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Install
+        working-directory: exchange-web
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: exchange-web
+        run: pnpm typecheck
+
+      - name: Test
+        working-directory: exchange-web
+        run: pnpm test
+
+      - name: The cross-repository checks actually ran
+        working-directory: exchange-web
+        run: |
+          set -euo pipefail
+          test -d ../brand/assets/site || {
+            echo "::error::micro-brand was not checked out; the favicons were never compared"
+            exit 1
+          }
+          test -f ../site/src/app.tsx || {
+            echo "::error::micro-site was not checked out; the footer's legal links were never resolved"
+            exit 1
+          }
+          # A skip is reported by the runner as a pass. Fail if either file reported one.
+          out=$(node --import tsx --import @cloudsforge/ui/test-loader --test \
+                  test/brand-chrome.test.ts test/shared-chrome.test.ts 2>&1 || true)
+          # THE SUMMARY LINE IS READ THROUGH TWO LAYERS OF REPORTER INCIDENTAL DETAIL, and both were
+          # measured rather than guessed:
+          #
+          #   - WHICH PREFIX. Piped output is TAP on Node 22 (`# skipped 1`) and `spec` on Node 24
+          #     (`ℹ skipped 1`). A pattern that knows only the TAP form goes silent the day
+          #     `node-version:` above moves — the gate failing exactly as the thing it guards fails.
+          #   - COLOUR. The spec reporter emits the line as `\e[34mℹ skipped 1\e[39m`, so `^ℹ` does
+          #     not match it. Stripped first, because a gate that cannot see a skip reports a pass.
+          #
+          # A here-string rather than a pipe: `grep -q` exits on its first match, the producer then
+          # writes into a closed pipe, and `pipefail` promotes that SIGPIPE to a failed step — a
+          # gate that fails for no reason and passes on re-run teaches re-running instead of reading.
+          plain=$(perl -pe 's/\e\[[0-9;]*m//g' <<<"$out")
+          if grep -qE '^(# |ℹ )skipped [1-9]' <<<"$plain"; then
+            printf '%s\n' "$out"
+            echo "::error::a cross-repository test skipped on the runner, where the sibling is present"
+            exit 1
+          fi
+          echo "ok: the sibling checkouts were read"
+
+      - name: Build
+        working-directory: exchange-web
+        run: pnpm build
+
+      - name: The brand chrome reached the build output
+        # Committing the bytes and shipping them are two different claims. The web template's
+        # Dockerfile once did not copy public/ into the build context, so four frontends shipped an
+        # image with no icon in it while their own brand test passed.
+        working-directory: exchange-web
+        run: |
+          set -euo pipefail
+          for asset in favicon-32x32.png favicon-192x192.png favicon-512x512.png og-1200x630.png; do
+            test -f "dist/$asset" || { echo "::error::dist/$asset is missing from the build output"; exit 1; }
+          done
+          echo "ok: the favicons and the og card are in dist"
+
+  rules:
+    name: Estate rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ────────────────────────────────────────────────────────────────────────────────────────
+      # EVERY RULE BELOW IS ALREADY A TEST. It is repeated here so that deleting the test does not
+      # silently delete the rule — which is the failure mode of a repository whose most important
+      # claims are enforced only by files that same commit is allowed to touch.
+      # ────────────────────────────────────────────────────────────────────────────────────────
+
+      - name: No build-time configuration
+        # A `VITE_` variable is read at build time and frozen into the artefact, so the image has to
+        # be rebuilt to be promoted — which means the thing that reaches production is not the thing
+        # that passed CI. Also asserted by test/no-build-time-config.test.ts.
+        run: |
+          set -uo pipefail
+          if grep -rn --include='*.ts' --include='*.tsx' --include='*.html' \
+               -e 'import\.meta\.env' -e 'VITE_' src index.html; then
+            echo "::error::this bundle must read no build-time environment; hosts come from window.location at runtime"
+            exit 1
+          fi
+          echo "ok: no build-time environment"
+
+      - name: No hard-coded CloudsForge hostname
+        # A literal hostname is a second, unversioned copy of the surface registry, and the copy is
+        # the one that will be wrong. It matters more here than on any sibling: this is the ONE
+        # bundle in the estate whose requests are deliberately cross-origin, so `rpc.<apex>` is
+        # composed a label at a time from the page's own hostname in src/lib/rpc.ts. src/lib/hosts.ts
+        # EXPLAINS the rule and has to name a hostname to do it, so comments are stripped first.
+        run: |
+          set -uo pipefail
+          strip() { perl -0pe 's{\{/\*.*?\*/\}}{}gs; s{/\*.*?\*/}{}gs; s{^\s*//.*$}{}gm' "$1"; }
+          fail=0
+          for f in $(find src -name '*.ts' -o -name '*.tsx'); do
+            if strip "$f" | grep -n 'cloudsforge\.online' | sed "s|^|$f:|" | grep .; then fail=1; fi
+          done
+          [ "$fail" = 0 ] || { echo "::error::derive hosts from window.location.hostname; do not name them"; exit 1; }
+          echo "ok: no literal hostnames in src"
+
+      - name: The SPA fallback keeps its 404
+        # `try_files $uri /index.html` answers 200 for every address in existence, which makes a
+        # "page not found" screen a success: search engines index it, uptime checks call it healthy,
+        # and a deploy that drops a route looks exactly like a deploy that did not.
+        #
+        # Comments stripped first: nginx.conf's own header QUOTES the directive it forbids in order
+        # to explain why the routes are enumerated by hand.
+        run: |
+          set -uo pipefail
+          directives=$(grep -v '^[[:space:]]*#' nginx.conf)
+          if printf '%s\n' "$directives" | grep -nE 'try_files[[:space:]]+\$uri[[:space:]]+(\$uri/[[:space:]]+)?/index\.html'; then
+            echo "::error::unknown paths must 404; serve the shell through error_page 404 /index.html"
+            exit 1
+          fi
+          grep -q 'error_page 404 /index.html' <<<"$directives"
+          echo "ok: unknown paths answer 404"
+
+      - name: No credential can reach the image, and nothing is proxied
+        # An image is built once and promoted, so a credential inside one is a published credential.
+        # There is also nothing to authenticate WITH and nothing to authenticate TO: this surface
+        # calls no CloudsForge service, and a chain node has never heard of a CloudsForge session.
+        run: |
+          set -uo pipefail
+          directives=$(grep -v '^[[:space:]]*#' nginx.conf)
+          if printf '%s\n' "$directives" | grep -niE 'proxy_pass|Authorization|Bearer'; then
+            echo "::error::this container proxies nothing and holds no credential"
+            exit 1
+          fi
+          dockerfile=$(grep -v '^[[:space:]]*#' Dockerfile)
+          if printf '%s\n' "$dockerfile" | grep -niE 'TOKEN|SECRET|PASSWORD'; then
+            echo "::error::the image must carry no credential"
+            exit 1
+          fi
+          echo "ok: no proxy, no credential"
+
+      - name: Nothing is gated behind a session
+        # Every fact on this surface is public by construction: it is on a public chain, and anybody
+        # with a node can read it. A gate would make a browser prove who it is to be shown a number
+        # an explorer will hand over for nothing. Asserted as an ABSENCE, because the reflex is to
+        # add one back — and comments are stripped because src/components/shell.tsx NAMES what it
+        # refuses and why.
+        run: |
+          set -uo pipefail
+          strip() { perl -0pe 's{\{/\*.*?\*/\}}{}gs; s{/\*.*?\*/}{}gs; s{^\s*//.*$}{}gm' "$1"; }
+          fail=0
+          for f in $(find src -name '*.ts' -o -name '*.tsx'); do
+            if strip "$f" | grep -nE 'ProtectedRoute|RequireAuth|AuthProvider|Authorization' | sed "s|^|$f:|" | grep .; then fail=1; fi
+          done
+          [ "$fail" = 0 ] || { echo "::error::every route on this surface renders for everybody"; exit 1; }
+          echo "ok: no session, no bearer, no gate"
+
+      - name: The route table, the router and nginx agree
+        run: test -f test/routes.test.ts && grep -q 'nginx.conf' test/routes.test.ts
+
+      # ────────────────────────────────────────────────────────────────────────────────────────
+      # THE RULES THIS REPOSITORY EXISTS FOR.
+      #
+      # This surface asks a stranger to sign a transaction that moves their own money, against
+      # contracts CloudsForge deployed and does not control. Two claims decide whether that is
+      # honest, and both are the kind that soften one review at a time:
+      #
+      #   1. CLOUDSFORGE HOLDS NOTHING. Not "your funds are safe" — safety is a promise nobody here
+      #      is in a position to make. The contracts hold the liquidity, the reader's own wallet
+      #      holds the keys, and there is no account, no balance and no support desk behind any of
+      #      it. A page that implies otherwise turns a permissionless pool into an unlicensed venue.
+      #   2. A POOL IS NOT A RECOMMENDATION. Anyone can create a market for any token, including a
+      #      token made to be worthless. A page that presents the pool list as a catalogue of things
+      #      CloudsForge stands behind is the mechanism by which somebody loses money believing they
+      #      were somewhere careful.
+      #
+      # test/render.test.ts is the real gate — it renders every address against a stubbed chain and
+      # reads the words. These steps are the crude second copies that survive that file being
+      # deleted.
+      # ────────────────────────────────────────────────────────────────────────────────────────
+      - name: No page offers a return, a guarantee or a recommendation
+        run: |
+          set -uo pipefail
+          strip() { perl -0pe 's{<!--.*?-->}{}gs; s{\{/\*.*?\*/\}}{}gs; s{/\*.*?\*/}{}gs; s{^\s*//.*$}{}gm' "$1"; }
+          fail=0
+          for f in index.html $(find src -name '*.tsx'); do
+            if strip "$f" | grep -niE '\bguaranteed?\b|\bAPY\b|\bAPR\b|\byields? [0-9]|\brisk-free\b|\bsafe investment\b|\bwe recommend\b|\bbest (price|rate) (anywhere|guaranteed)\b' \
+                 | sed "s|^|$f:|" | grep .; then fail=1; fi
+          done
+          [ "$fail" = 0 ] || {
+            echo "::error::nothing on this surface may offer a return or vouch for a market"
+            exit 1
+          }
+          echo "ok: no page offers a return"
+
+      - name: THE CUSTODY SENTENCE IS PRESENT, AND IT IS IN THE CHROME
+        # In the SHELL, above the outlet, so there is no route a stranger can arrive at without
+        # meeting it — including one that does not exist. A page-level notice is a notice somebody
+        # forgets to add to the fourth page. Also asserted by test/shared-chrome.test.ts.
+        run: |
+          set -uo pipefail
+          grep -q 'NotCustodiedNotice' src/components/shell.tsx || {
+            echo "::error::the custody notice is no longer mounted in the shell"; exit 1; }
+          grep -q 'NOT_CUSTODIED' src/lib/format.ts || {
+            echo "::error::the custody sentence is no longer written in one place"; exit 1; }
+          echo "ok: the custody sentence is in the chrome"
+
+      - name: NO PAGE SAYS CLOUDSFORGE HOLDS, CUSTODIES OR SECURES ANYTHING
+        # The inverse of the step above, and the one that catches a softening. "Your funds are safe
+        # with us" is the sentence this product must never contain, in any of its shapes — and it
+        # arrives by accident, in reassuring copy written by somebody being kind.
+        run: |
+          set -uo pipefail
+          strip() { perl -0pe 's{<!--.*?-->}{}gs; s{\{/\*.*?\*/\}}{}gs; s{/\*.*?\*/}{}gs; s{^\s*//.*$}{}gm' "$1"; }
+          fail=0
+          for f in index.html $(find src -name '*.tsx'); do
+            if strip "$f" | grep -niE 'your (funds|coins|money) are (safe|secure|protected)|we (hold|custody|safeguard) your|held (safely|securely) by CloudsForge|insured' \
+                 | sed "s|^|$f:|" | grep .; then fail=1; fi
+          done
+          [ "$fail" = 0 ] || { echo "::error::CloudsForge holds nothing here and no page may imply it does"; exit 1; }
+          echo "ok: no page claims custody"
+
+      - name: THE DEPLOYMENT IS KEYED BY CHAIN ID, NOT BY HOSTNAME AND NOT BY A FLAG
+        # A chain id is the one fact that cannot lie about which contracts are in front of you. A
+        # hostname can be re-pointed and an environment variable can be stale — and the failure mode
+        # is a swap form rendered against a factory that is not there, or worse, against a different
+        # one. `deploymentFor(null)` returning null is a rendered state, not an error.
+        run: |
+          set -uo pipefail
+          grep -q 'eth_chainId' src/lib/chain.tsx || {
+            echo "::error::the chain is no longer read from the node on every load"; exit 1; }
+          grep -q 'export function deploymentFor' src/lib/dex.ts || {
+            echo "::error::the deployment is no longer looked up by chain id"; exit 1; }
+          echo "ok: the deployment follows the chain id"
+
+      - name: THE READER'S OWN BROWSER RE-DERIVES THE PAIR ADDRESS
+        # Trap 1 from docs/ecosystem/39: the V2 router hard-codes an INIT_CODE_HASH, and a fork that
+        # recompiled the pair without updating it sends every swap to an address with no code —
+        # while `getPair()` goes on answering correctly. The check only means something if a READER
+        # can make it, which is why the CREATE2 derivation is in the bundle and rendered beside the
+        # factory's own answer rather than asserted here on their behalf.
+        run: |
+          set -uo pipefail
+          grep -q 'export function pairFor' src/lib/dex.ts || {
+            echo "::error::the CREATE2 derivation is gone; the reader can no longer check trap 1"; exit 1; }
+          grep -q 'pairFor' src/pages/contracts.tsx || {
+            echo "::error::the contracts page no longer shows the derivation beside getPair()"; exit 1; }
+          grep -q 'pairFor' src/pages/pool.tsx || {
+            echo "::error::a pool page no longer warns when an address is not the canonical pair"; exit 1; }
+          echo "ok: the derivation is rendered, not asserted"
+
+      - name: THE QUOTE THE READER ACTS ON IS THE ROUTER'S
+        # src/lib/dex.ts ports the constant-product arithmetic so the page can draw a CURVE — a
+        # hundred quotes, which would otherwise be a hundred round trips for a picture. The number
+        # beside the Swap button must still be `getAmountsOut` from the router, because these
+        # functions agreeing with the chain is the sort of thing that is true until a parameter
+        # changes.
+        run: |
+          set -uo pipefail
+          grep -q 'getAmountsOut' src/lib/market.ts || {
+            echo "::error::nothing reads getAmountsOut; the quote is no longer the router's"; exit 1; }
+          test -f test/dex.test.ts || {
+            echo "::error::the ported arithmetic has no test pinning it to the reference formulae"; exit 1; }
+          echo "ok: the fill is quoted by the router"
+
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: exchange-web }
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-ui
+          path: ui
+          token: ${{ secrets.ESTATE_READ_TOKEN || github.token }}
+
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: exchange-web
+          build-contexts: uipkg=ui
+          build-args: RELEASE=${{ github.sha }}
+          push: false
+          load: true
+          tags: exchange-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # PROBED, NOT READ. Both defects this step guards were invisible in the config and obvious in
+      # a response: nginx's `add_header` is all-or-nothing per level, so a location that sets
+      # Cache-Control silently loses every inherited security header; and `try_files` is a file
+      # lookup rather than an internal redirect, so serving /index.html from `location = /` never
+      # enters `location = /index.html`. Reading the file suggests both are fine. Curling it does not.
+      - name: The image serves the app, 404s what it does not own, and sends the headers it promises
+        run: |
+          set -uo pipefail
+          docker run -d --name ci-exchange-web -p 127.0.0.1:8080:8080 exchange-web:ci
+          for _ in $(seq 1 30); do
+            code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ || true)
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          [ "${code:-}" = "200" ] || { echo "::error::the image returned ${code:-no answer} for /"; docker logs --tail 60 ci-exchange-web; exit 1; }
+
+          fail=0
+
+          # Every route this app owns must survive a hard refresh. `/pools/0x…` is the link somebody
+          # pastes into a conversation and somebody else opens cold — and on this surface that link
+          # is how a reader is pointed at a specific pool before deciding to trade against it.
+          for owned in /pools /pools/0x1111111111111111111111111111111111111111 /contracts; do
+            got=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$owned" || true)
+            [ "$got" = "200" ] || { echo "::error::$owned returned $got"; fail=1; }
+          done
+
+          # A route it does NOT own answers 404 while still serving the shell, so the reader gets a
+          # real page and the status line tells the truth. `/swap` is named explicitly: the swap is
+          # the INDEX route, `/swap` is the address a reader will guess, and 404 is the honest
+          # answer rather than a blank 200 a crawler will index.
+          for unknown in /swap /liquidity /nope/not/a/route /pool; do
+            got=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$unknown" || true)
+            [ "$got" = "404" ] || { echo "::error::$unknown returned $got; it must be 404"; fail=1; }
+          done
+          # NOT A PIPE INTO `grep -q` — the hazard this file avoids with here-strings elsewhere.
+          # grep -q exits at its first match and closes the pipe while curl is still writing; curl
+          # dies of EPIPE (23), `pipefail` makes that the pipeline's status, and the `||` then
+          # reports that the shell was not served — about a shell that was served perfectly. The log
+          # cannot tell that flake from the defect the check exists to catch. Measured 2026-08-10 on
+          # micro-hub-web — micro-org#347. Capturing first leaves no pipe to close early, and `case`
+          # is an exact glob rather than a regex.
+          shell_404=$(curl -s -m 5 http://127.0.0.1:8080/swap || true)
+          case "$shell_404" in
+            *'<div id="root">'*) ;;
+            *) echo "::error::the 404 did not serve the app shell"; fail=1 ;;
+          esac
+
+          check() { # url, header, expected-substring, label
+            got=$(curl -sI "$1" | tr -d '\r' | grep -i "^$2:" | cut -d' ' -f2- || true)
+            case "${got:-}" in
+              "") echo "::error::$4 is missing $2"; fail=1 ;;
+              *"$3"*) echo "  ok   $4: $2: $got" ;;
+              *) echo "::error::$4 has the wrong $2 (got '${got:-nothing}', wanted '$3')"; fail=1 ;;
+            esac
+          }
+
+          asset=$(curl -s http://127.0.0.1:8080/ | grep -oE '/assets/[^"]+\.js' | head -1)
+          for target in "http://127.0.0.1:8080/" "http://127.0.0.1:8080/pools" "http://127.0.0.1:8080$asset"; do
+            check "$target" X-Content-Type-Options "nosniff" "$target"
+            # SAMEORIGIN rather than DENY: this is a public reference surface and the Forge Network
+            # site has a legitimate reason to embed it. The operator console uses DENY.
+            check "$target" X-Frame-Options "SAMEORIGIN" "$target"
+            check "$target" Referrer-Policy "strict-origin" "$target"
+          done
+          check "http://127.0.0.1:8080/" Cache-Control "no-store" "the shell"
+          check "http://127.0.0.1:8080/pools" Cache-Control "no-store" "an enumerated route"
+          check "http://127.0.0.1:8080$asset" Cache-Control "immutable" "a hashed asset"
+
+          # THE RELEASE IS STAMPED. It is what pins an error report to the deploy that introduced it,
+          # and it is the one thing in this image that identifies the artefact.
+          release_meta=$(curl -s http://127.0.0.1:8080/ || true)
+          case "$release_meta" in
+            *'name="cf-release" content="${{ github.sha }}"'*) ;;
+            *) echo "::error::the release was not stamped into index.html"; fail=1 ;;
+          esac
+
+          # A TESTNET EXCHANGE MUST NOT COMPETE WITH MAINNET IN SEARCH RESULTS. The page it serves is
+          # a form that asks a wallet to sign, and a stranger who searches for the CloudsForge
+          # exchange and lands on the testnet copy is shown a market, a price and a Swap button for
+          # coins that are worth nothing — while the transaction they sign is real on the chain it
+          # reaches.
+          robots_testnet=$(curl -s -H 'Host: exchange-testnet.cloudsforge.online' http://127.0.0.1:8080/robots.txt || true)
+          case "$robots_testnet" in
+            *'Disallow: /'*) ;;
+            *) echo "::error::a non-mainnet hostname does not refuse crawlers"; fail=1 ;;
+          esac
+          env404=$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H 'Host: exchange-testnet.cloudsforge.online' http://127.0.0.1:8080/sitemap.xml || true)
+          [ "$env404" = "404" ] || { echo "::error::a non-mainnet hostname served a sitemap ($env404)"; fail=1; }
+          robots_mainnet=$(curl -s http://127.0.0.1:8080/robots.txt || true)
+          case "$robots_mainnet" in
+            *'Allow: /'*) ;;
+            *) echo "::error::the mainnet hostname refuses crawlers; this surface exists to be found"; fail=1 ;;
+          esac
+
+          # This public reference surface must NOT be kept out of an index.
+          robots=$(curl -sI http://127.0.0.1:8080/ | tr -d '\r' | grep -ci '^X-Robots-Tag:' || true)
+          [ "${robots:-0}" = "0" ] || { echo "::error::this public surface sends X-Robots-Tag"; fail=1; }
+
+          # THE IMAGE CARRIES NO DEPLOYMENT DOCUMENT, AND THAT IS THE POINT.
+          #
+          # micro-pool-web serves `/deployment.json` because "is micro-pool deployed on this network"
+          # is not a question a browser can answer for itself. Here it is: `eth_chainId` against the
+          # node this page is talking to, compared with a frozen table. So there is no template, no
+          # envsubst, no `POOL_API_PRESENCE`, and nothing per-deployment in this image at all — one
+          # artefact, promoted unchanged, whose behaviour on a network with no exchange is decided by
+          # the chain rather than by an environment variable somebody has to remember to set.
+          dep=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/deployment.json || true)
+          [ "$dep" = "404" ] || { echo "::error::/deployment.json answered $dep; this image has no per-deployment config"; fail=1; }
+
+          # The brand chrome is SERVED by the image, not merely committed to the repository.
+          for asset in favicon-32x32.png favicon-192x192.png favicon-512x512.png og-1200x630.png; do
+            code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/$asset" || true)
+            [ "$code" = "200" ] || { echo "::error::/$asset returned $code from the image"; fail=1; }
+          done
+
+          docker rm -f ci-exchange-web >/dev/null 2>&1 || true
+          exit $fail
+
+      - name: Down
+        if: always()
+        run: docker rm -f ci-exchange-web || true
+
+  hygiene:
+    # The org's reusable secret check. Cheap, and it catches the failure that cannot be undone: a
+    # secret pushed to a repository is compromised the moment it lands, and rotating it is the only
+    # remedy. It matters more on a PUBLIC repository, which this one is.
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    permissions:
+      contents: read
+
+  # ────────────────────────────────────────────────────────────────────────────────────────────────
+  # THE IMAGE, PUBLISHED. The `image` job above is a GATE — it needs `load:` so it can boot the
+  # container and probe it, and it throws the result away. This is the PRODUCER. Different purposes,
+  # so different jobs.
+  #
+  # A frontend with no producer is a manifest entry that can never verify: `cfctl release` pins one
+  # image per deployable, `cfctl release --verify` runs `docker manifest inspect` on every entry, and
+  # `release-deploy.sh` refuses to change anything while one image is missing.
+  #
+  # `packages: write` IS GRANTED HERE rather than asked for inside the shared workflow, and that is
+  # forced rather than stylistic: a called workflow's GITHUB_TOKEN can only be maintained or reduced,
+  # never elevated, so a reusable workflow asking for a permission its caller withheld fails the run
+  # at STARTUP, before a step runs. Measured on micro-org: the run whose caller capped at
+  # `packages: read` ended in startup_failure; the same workflow with a caller granting
+  # `packages: write` succeeded.
+  #
+  # `needs:` names EVERY other job, so nothing is published that did not pass every gate here.
+  # ────────────────────────────────────────────────────────────────────────────────────────────────
+  publish:
+    needs: [check, rules, image, hygiene]
+    # A green push to main and nothing else. An image tag a release manifest pins has to name
+    # something that passed, on the branch it will be deployed from.
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/design-system/') ||
+      startsWith(github.ref, 'refs/heads/release/'))
+    uses: cloudsforge-online/micro-org/.github/workflows/publish-image.yml@main
+    with:
+      # `web`, so the producer checks micro-ui out as the `uipkg` named build context this
+      # repository's Dockerfile reads. It names ONLY the contexts its kind checked out, because
+      # buildx stats every named context before it opens the Dockerfile.
+      kind: web
+    secrets:
+      estate_token: ${{ secrets.ESTATE_READ_TOKEN }}
+    permissions:
+      contents: read
+      packages: write

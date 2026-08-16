@@ -1,0 +1,1199 @@
+/*
+ * Forge Exchange's own styles, on top of @cloudsforge/ui.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * EVERY CUSTOM PROPERTY REFERENCED HERE IS DEFINED IN `ui/packages/ui/src/tokens.css`, AND A TEST
+ * PROVES IT.
+ *
+ * `test/tokens.test.ts` reads the sibling design system, collects every `--cf-*` this file names,
+ * and fails on one that tokens.css does not declare. That is not a style preference: an undefined
+ * custom property makes the whole declaration invalid at computed-value time, so
+ * `border: 1px solid var(--cf-undefined)` does not fall back to a sensible border — it drops the
+ * border entirely, silently, in a file that looks correct.
+ *
+ * The estate has shipped exactly that. `micro-mint-web/src/styles.css` names ten properties that do
+ * not exist — `--cf-border`, `--cf-radius-md`, `--cf-space-1` through `--cf-space-5` and
+ * `--cf-status-good`/`-warn`/`-crit` — across 72 declarations. The names that DO exist:
+ *
+ *   borders   --cf-line, --cf-line-strong             (never --cf-border)
+ *   states    --cf-good-*, --cf-warn-*, --cf-critical-*, --cf-success, --cf-danger
+ *   radii     --cf-radius-sm, --cf-radius, --cf-radius-lg   (never --cf-radius-md)
+ *   spacing   --cf-space-3xs … --cf-space-3xl         (never --cf-space-1..5)
+ *   type      --cf-font-sans, --cf-font-mono, --cf-font-display  (never --cf-font)
+ *
+ * MARK STEP AND TEXT STEP ARE DIFFERENT TOKENS. `--cf-accent`, `--cf-ember` and `--cf-warn` are
+ * validated at 3:1 — the floor for a border, a fill or a stroke; `--cf-accent-text` and
+ * `--cf-warn-text` are the 4.5:1 step for type. Every `color:` below names a `-text` step; every
+ * border, stroke and fill keeps the mark step.
+ *
+ * A `var(--undefined, #hex)` is not a repair either — it is a hard-coded colour wearing a token's
+ * clothes, and it stops following the substrate the moment somebody switches the ash ramp. There is
+ * one literal colour in this file and it is `transparent`.
+ *
+ * The same rule applies to CLASS names: a `cf-` class that does not exist upstream fails exactly as
+ * quietly as a property that does, and local classes take the `xc-` prefix so the two namespaces
+ * cannot silently merge.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * ── THE DIRECTION, IN ONE PARAGRAPH ───────────────────────────────────────────────────────────
+ *
+ * An automated market maker is a machine with no opinion and no memory, and the picture that fits
+ * it is not a price chart. So the surface is built as an INSTRUMENT PANEL: hairline-ruled rows of
+ * label and value, a monospace utility face for everything measured, a display face used once per
+ * page for the title, and exactly one place where colour is spent — the curve. Every other panel is
+ * quiet on purpose so that the one drawing is the thing a reader remembers.
+ *
+ * The tangent line on that curve is the argument made visible: on a constant-product pool the price
+ * IS the slope at your position, and a trade slides you along the line to a worse one. Nothing else
+ * on this page needs to be loud once that is on screen.
+ */
+
+/* ---- the base layer --------------------------------------------------- */
+
+/*
+ * The tokens are DELIVERED by tokens.css and have to be CONSUMED here.
+ *
+ * `index.html` sets `data-cf-product`/`data-cf-substrate` on `<html>` and tokens.css resolves
+ * `--cf-bg` on `:root`, but if nothing in this file ever reads those properties on `body` the
+ * document falls all the way through to the UA stylesheet — a transparent background, Times, and an
+ * 8px margin. That defect is invisible to `curl` (the surface still returns 200) and invisible to a
+ * mocked DOM test (happy-dom neither loads the stylesheet nor cascades it), and glaring to the first
+ * person who opens the page in a browser. Explorer-web shipped it once.
+ *
+ * `color-scheme` is deliberately NOT declared here. It is an inherited property, `index.html`
+ * carries `data-cf-scheme="auto"`, and tokens.css sets it on `<html>` for the whole estate; a
+ * declaration on `body` would beat the inherited one for the entire page and leave a reader on a
+ * light system with the light palette and dark native controls — the two `<select>`s on the swap
+ * form among them.
+ */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--cf-bg);
+  color: var(--cf-fg);
+  font-family: var(--cf-font-sans);
+  line-height: var(--cf-leading);
+}
+
+/* ---- the frame -------------------------------------------------------- */
+
+/*
+ * A LOCAL header, because `CloudsForgeBar` cannot be mounted from this surface. The argument is in
+ * full at the top of src/components/shell.tsx: the shared bar always renders an account control, and
+ * there is nothing on this site to sign in to — every number here comes from a public chain node
+ * that has never heard of a CloudsForge session. `--cf-bar-h` is still the height, so this row lines
+ * up with every other surface's chrome rather than being a few pixels of its own.
+ */
+.xc-head {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--cf-bg);
+  border-bottom: 1px solid var(--cf-line);
+}
+
+.xc-head__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-sm);
+  max-width: var(--cf-max-w);
+  min-height: var(--cf-bar-h);
+  margin: 0 auto;
+  padding: 0 var(--cf-space-lg);
+}
+
+.xc-head__logo {
+  display: inline-flex;
+  align-items: center;
+  color: var(--cf-fg);
+  border-radius: var(--cf-radius-sm);
+}
+
+/* A rule, not a bullet: the logo belongs to the estate and the name belongs to this surface. */
+.xc-head__sep {
+  width: 1px;
+  height: 1.25rem;
+  background: var(--cf-line-strong);
+}
+
+.xc-head__name {
+  font-family: var(--cf-font-display);
+  font-size: var(--cf-text-md);
+  font-weight: 600;
+  letter-spacing: var(--cf-tracking-tight);
+  white-space: nowrap;
+}
+
+.xc-head__spacer {
+  flex: 1 1 auto;
+}
+
+/*
+ * The block every number on the page is as of, in the utility face at the smallest legible step.
+ * It is a footnote that happens to live in the header — present for anyone who wants to check a
+ * quote against the explorer, quiet enough to ignore for everyone else.
+ */
+.xc-head__block {
+  display: none;
+  align-items: baseline;
+  gap: var(--cf-space-3xs);
+  font-size: var(--cf-text-2xs);
+  color: var(--cf-fg-mute);
+  white-space: nowrap;
+}
+
+.xc-head__block-label {
+  font-family: var(--cf-font-mono);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+}
+
+/* ---- navigation ------------------------------------------------------- */
+
+.xc-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-2xs);
+}
+
+/*
+ * The current page is marked with a RULE UNDER THE WORD rather than a filled pill. Three items is
+ * too few to need a container, and an underline is the one indicator that survives being printed,
+ * being read in high contrast, and being looked at by somebody who cannot tell the accent from the
+ * foreground.
+ */
+.xc-nav__link {
+  padding: var(--cf-space-2xs) var(--cf-space-xs);
+  border-bottom: 2px solid transparent;
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+  text-decoration: none;
+  transition: color var(--cf-speed) var(--cf-ease);
+}
+
+.xc-nav__link:hover {
+  color: var(--cf-fg);
+}
+
+.xc-nav__link--current {
+  border-bottom-color: var(--cf-ember);
+  color: var(--cf-fg);
+  font-weight: 600;
+}
+
+/* ---- the page --------------------------------------------------------- */
+
+.xc-main {
+  max-width: var(--cf-max-w);
+  margin: 0 auto;
+  padding: var(--cf-space-xl) var(--cf-space-lg) var(--cf-space-3xl);
+}
+
+.xc-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-xl);
+}
+
+.xc-page__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+}
+
+/*
+ * The display face, used ONCE per page. Spending it on every heading is what makes a display face
+ * read as decoration; spending it on the one line that names the page is what makes it read as
+ * typography.
+ */
+.xc-title {
+  margin: 0;
+  font-family: var(--cf-font-display);
+  font-size: var(--cf-text-4xl);
+  font-weight: 600;
+  line-height: var(--cf-leading-tight);
+  letter-spacing: var(--cf-tracking-tight);
+}
+
+.xc-lede {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-md);
+  line-height: var(--cf-leading);
+}
+
+/* The utility face: eyebrows, field labels, table units. Small, spaced, upper. */
+.xc-eyebrow {
+  margin: 0;
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-mute);
+}
+
+.xc-eyebrow a {
+  color: inherit;
+}
+
+.xc-note {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading);
+}
+
+.xc-links {
+  margin: 0;
+  padding-left: var(--cf-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+}
+
+/* A button-shaped thing that is a link: the "use my whole balance" affordance. */
+.xc-linkish {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cf-accent-text);
+  font: inherit;
+  font-size: var(--cf-text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ---- panels ----------------------------------------------------------- */
+
+/*
+ * One container style for the whole surface. Panels are distinguished by WHAT IS IN THEM, not by
+ * being given different borders and tints — six variants of a box is how a page ends up looking
+ * like a settings screen.
+ */
+.xc-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-md);
+  padding: var(--cf-space-lg);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-lg);
+  background: var(--cf-bg-raised);
+}
+
+.xc-panel__title {
+  margin: 0;
+  font-size: var(--cf-text-sm);
+  font-weight: 600;
+  letter-spacing: var(--cf-tracking-wide);
+  text-transform: uppercase;
+  color: var(--cf-fg-dim);
+  font-family: var(--cf-font-mono);
+}
+
+.xc-panel__note {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+}
+
+.xc-panel__actions {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cf-space-xs);
+}
+
+/* ---- hairline fact rows: the surface's structural device ---------------- */
+
+/*
+ * Label left, measured value right, a hairline between. This is the one repeating structure on the
+ * surface, and it repeats because the thing it presents repeats: a name and a number read off a
+ * contract. Giving each of those its own tile would multiply the chrome without adding a fact.
+ */
+.xc-facts {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.xc-facts__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cf-space-md);
+  padding: var(--cf-space-xs) 0;
+  border-top: 1px solid var(--cf-line);
+}
+
+.xc-facts__row:first-child {
+  border-top: 0;
+}
+
+.xc-facts__row > dt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+}
+
+.xc-facts__row > dd {
+  margin: 0;
+  text-align: right;
+  font-size: var(--cf-text-sm);
+}
+
+.xc-facts__hint {
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-2xs);
+  line-height: var(--cf-leading-snug);
+  max-width: 28ch;
+}
+
+.xc-facts__unit {
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-2xs);
+}
+
+/*
+ * Addresses and the invariant wrap rather than scroll. A 78-digit integer in a fixed-width cell
+ * would be truncated, and a truncated invariant is not an invariant anybody can check.
+ */
+.xc-facts__wrap {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-size: var(--cf-text-2xs);
+  line-height: var(--cf-leading-snug);
+}
+
+/* ---- the swap page ---------------------------------------------------- */
+
+/*
+ * THE FORM IS FIRST AND IT DOES NOT STRETCH.
+ *
+ * Both halves of that are deliberate. The form is first in document order and first in the grid, so
+ * the control a reader came for is never below the picture that explains it; and the curve panel is
+ * `align-self: start`, so it takes the height its content needs instead of growing to match the
+ * column beside it. A right-hand column that stretches to the bottom of the page is the exact defect
+ * micro-org#145 records against Foresight, and it is caused by the default `stretch` nobody writes
+ * down.
+ */
+.xc-swap {
+  display: grid;
+  grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--cf-space-lg);
+}
+
+.xc-swap__form {
+  gap: var(--cf-space-sm);
+}
+
+.xc-swap__curve {
+  align-self: start;
+}
+
+.xc-empty-line {
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+}
+
+/* ---- the two amount fields -------------------------------------------- */
+
+.xc-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+  padding: var(--cf-space-sm);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius);
+  background: var(--cf-bg-sunken);
+}
+
+.xc-field__label {
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-mute);
+}
+
+.xc-field__row {
+  display: flex;
+  align-items: center;
+  gap: var(--cf-space-xs);
+}
+
+/*
+ * The amount is the largest type on the page after the title, because it is the number the reader
+ * is deciding about. It is borderless inside its own field: the field is the input, and drawing a
+ * box inside a box is chrome standing in for hierarchy.
+ */
+.xc-field__amount {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: var(--cf-text-2xl);
+  line-height: var(--cf-leading-tight);
+}
+
+/* The received amount is a QUOTE, not an entry. Dimmed, and it carries no caret. */
+.xc-field__amount--out {
+  color: var(--cf-fg-dim);
+}
+
+.xc-field__token {
+  flex: 0 0 auto;
+  max-width: 11rem;
+}
+
+.xc-field__note {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cf-space-2xs);
+  min-height: 1.25rem;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+}
+
+/*
+ * The flip control sits ON the seam between the two fields, which is the only place it can sit and
+ * still mean "these two swap". Negative margins pull the fields toward it so the row reads as one
+ * object rather than three stacked ones.
+ */
+.xc-flip {
+  display: flex;
+  justify-content: center;
+  margin: calc(-1 * var(--cf-space-2xs)) 0;
+  position: relative;
+  z-index: 1;
+}
+
+.xc-flip__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--cf-line-strong);
+  border-radius: var(--cf-radius-lg);
+  background: var(--cf-bg-raised);
+  color: var(--cf-fg-dim);
+  cursor: pointer;
+  transition:
+    color var(--cf-speed) var(--cf-ease),
+    border-color var(--cf-speed) var(--cf-ease);
+}
+
+.xc-flip__btn:hover {
+  border-color: var(--cf-ember);
+  color: var(--cf-ember-text);
+}
+
+/* ---- slippage tolerance ------------------------------------------------ */
+
+.xc-tolerance {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+}
+
+.xc-tolerance__legend {
+  padding: 0;
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-mute);
+}
+
+.xc-tolerance__hint {
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+  line-height: var(--cf-leading-snug);
+}
+
+/* A segmented control built out of real radios: three cells, one hairline grid, no JavaScript. */
+.xc-tolerance__opts {
+  display: inline-flex;
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius);
+  overflow: hidden;
+  width: fit-content;
+}
+
+.xc-tolerance__opt {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cf-space-3xs);
+  padding: var(--cf-space-2xs) var(--cf-space-sm);
+  border-left: 1px solid var(--cf-line);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-xs);
+  color: var(--cf-fg-dim);
+  cursor: pointer;
+}
+
+.xc-tolerance__opt:first-child {
+  border-left: 0;
+}
+
+.xc-tolerance__opt:hover {
+  color: var(--cf-fg);
+}
+
+.xc-tolerance__opt:focus-within {
+  outline: 2px solid var(--cf-accent);
+  outline-offset: -2px;
+}
+
+/* :has() is not required for this to be usable — the native radio remains visible and checked. */
+.xc-tolerance__opt:has(input:checked) {
+  background: var(--cf-surface);
+  color: var(--cf-fg);
+}
+
+/* ---- the action, and what it says instead --------------------------------- */
+
+.xc-action {
+  width: 100%;
+  justify-content: center;
+}
+
+/*
+ * When there is no action to offer, the button is REPLACED by a sentence rather than shown
+ * disabled with a tooltip. A disabled control that never explains itself is the interface telling
+ * the reader they have done something wrong without saying what.
+ */
+.xc-action__none {
+  margin: 0;
+  padding: var(--cf-space-xs) 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+  text-align: center;
+}
+
+.xc-problem {
+  margin: 0;
+  padding: var(--cf-space-xs) var(--cf-space-sm);
+  border: 1px solid var(--cf-critical-edge);
+  border-radius: var(--cf-radius);
+  background: var(--cf-critical-wash);
+  color: var(--cf-critical-text);
+  font-size: var(--cf-text-sm);
+}
+
+.xc-sent {
+  margin: 0;
+  padding: var(--cf-space-xs) var(--cf-space-sm);
+  border: 1px solid var(--cf-good-edge);
+  border-radius: var(--cf-radius);
+  background: var(--cf-good-wash);
+  color: var(--cf-good-text);
+  font-size: var(--cf-text-sm);
+}
+
+/* ---- the terms, as a definition list ----------------------------------- */
+
+/*
+ * Three facts a reader is agreeing to, set as term and detail on hairlines. NOT three identical
+ * tiles: a tile grid says "these are options, pick one", and these are not options — they are
+ * consequences, and they all apply.
+ */
+.xc-terms {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-sm);
+}
+
+.xc-terms__title {
+  margin: 0;
+  font-size: var(--cf-text-sm);
+  font-weight: 600;
+  font-family: var(--cf-font-mono);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-dim);
+}
+
+.xc-terms__list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0 var(--cf-space-xl);
+}
+
+.xc-terms__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+  padding: var(--cf-space-sm) 0;
+  border-top: 1px solid var(--cf-line);
+}
+
+.xc-terms__what {
+  font-weight: 600;
+  font-size: var(--cf-text-sm);
+}
+
+.xc-terms__detail {
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+/* ---- the invariant curve: the one place colour is spent ---------------- */
+
+.xc-curve {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+}
+
+.xc-curve__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--cf-radius);
+  background: var(--cf-viz-surface);
+}
+
+/* The gradient beneath the line. Mark step, because a fill is a fill and not type. */
+.xc-curve__wash-top {
+  stop-color: var(--cf-ember);
+  stop-opacity: 0.28;
+}
+
+.xc-curve__wash-bottom {
+  stop-color: var(--cf-ember);
+  stop-opacity: 0;
+}
+
+.xc-curve__axis {
+  stroke: var(--cf-viz-axis);
+  stroke-width: 1;
+}
+
+.xc-curve__fill {
+  stroke: none;
+}
+
+.xc-curve__line {
+  fill: none;
+  stroke: var(--cf-ember);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/*
+ * THE SIGNATURE STROKE. The tangent at the current reserves is the price, drawn as a line, and it
+ * is dashed so it reads as a construction rather than as data. Everything else on this surface is
+ * quiet so that this one dashed line can carry the whole idea.
+ */
+.xc-curve__tangent {
+  stroke: var(--cf-viz-axis);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+/* Where the trade takes the pool: from `now` to `after`, along the line. */
+.xc-curve__slide {
+  fill: none;
+  stroke: var(--cf-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.xc-curve__now {
+  fill: var(--cf-ember);
+  stroke: var(--cf-viz-surface);
+  stroke-width: 2;
+}
+
+.xc-curve__after {
+  fill: var(--cf-accent);
+  stroke: var(--cf-viz-surface);
+  stroke-width: 2;
+}
+
+.xc-curve__caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--cf-space-2xs);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  color: var(--cf-fg-mute);
+}
+
+.xc-curve__axis-label {
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+}
+
+.xc-curve__axis-label--y {
+  text-align: right;
+}
+
+.xc-curve__none {
+  margin: 0;
+  padding: var(--cf-space-lg) 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+  text-align: center;
+}
+
+/* ---- tables ------------------------------------------------------------ */
+
+.xc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--cf-text-sm);
+}
+
+/*
+ * The caption is where the truncation is reported, so it sits ABOVE the rows and reads as a
+ * sentence. `caption-side: top` is the default, stated because the number it carries — "the first
+ * 50 of 128" — is the difference between a list and a page of a list.
+ */
+.xc-table__caption {
+  caption-side: top;
+  text-align: left;
+  padding-bottom: var(--cf-space-sm);
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+}
+
+.xc-table th,
+.xc-table td {
+  padding: var(--cf-space-xs) var(--cf-space-sm);
+  border-top: 1px solid var(--cf-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.xc-table thead th {
+  border-top: 0;
+  border-bottom: 1px solid var(--cf-line-strong);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-mute);
+  white-space: nowrap;
+}
+
+.xc-table__num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.xc-table__market {
+  font-weight: 600;
+}
+
+.xc-table__market a {
+  color: var(--cf-fg);
+}
+
+/* The one-line explanation under a contract's name on the contracts page. */
+.xc-table__what {
+  display: block;
+  max-width: 26ch;
+  margin-top: var(--cf-space-3xs);
+  font-weight: 400;
+  font-size: var(--cf-text-2xs);
+  line-height: var(--cf-leading-snug);
+  color: var(--cf-fg-mute);
+}
+
+.xc-table__unit {
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-2xs);
+}
+
+.xc-table__none {
+  color: var(--cf-fg-mute);
+  font-style: italic;
+}
+
+/* ---- the pool detail --------------------------------------------------- */
+
+.xc-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  align-items: start;
+  gap: var(--cf-space-lg);
+}
+
+.xc-detail__curve {
+  align-self: start;
+}
+
+.xc-detail__facts {
+  align-self: start;
+}
+
+/* The derivation's result, stated in a sentence and coloured only at the edge. */
+.xc-verdict {
+  margin: 0;
+  padding: var(--cf-space-sm);
+  border-radius: var(--cf-radius);
+  border: 1px solid var(--cf-line);
+  border-left-width: 3px;
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-verdict--ok {
+  border-left-color: var(--cf-good);
+  color: var(--cf-fg-dim);
+}
+
+.xc-verdict--off {
+  border-left-color: var(--cf-critical);
+  background: var(--cf-critical-wash);
+  color: var(--cf-critical-text);
+}
+
+/* ---- the checks -------------------------------------------------------- */
+
+/*
+ * THE NUMBERING IS REAL, WHICH IS THE ONLY REASON IT IS THERE.
+ *
+ * These four checks are ordered by dependency: check 2 is meaningless if check 1 failed, and check
+ * 3 assumes both. A numbered list is the right structure for a sequence and the wrong one for a set
+ * — decorative 01/02/03 markers over unordered items are a tic, not a device.
+ */
+.xc-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.xc-check {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-xs);
+  padding: var(--cf-space-md) 0;
+  border-top: 1px solid var(--cf-line);
+}
+
+.xc-check:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.xc-check__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cf-space-sm);
+}
+
+.xc-check__n {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  font-size: var(--cf-text-xl);
+  line-height: 1;
+  color: var(--cf-line-strong);
+}
+
+.xc-check__question {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--cf-text-md);
+  font-weight: 600;
+  line-height: var(--cf-leading-snug);
+}
+
+/*
+ * The verdict is a WORD in a bordered chip, not a tick and not a colour on its own. A green check
+ * mark renders identically whether the page checked anything or decided to draw one; a reader who
+ * came here suspicious is owed something they can read.
+ */
+.xc-check__verdict {
+  flex: 0 0 auto;
+  padding: var(--cf-space-3xs) var(--cf-space-2xs);
+  border: 1px solid var(--cf-good-edge);
+  border-radius: var(--cf-radius-sm);
+  background: var(--cf-good-wash);
+  color: var(--cf-good-text);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  white-space: nowrap;
+}
+
+.xc-check__verdict--bad {
+  border-color: var(--cf-critical-edge);
+  background: var(--cf-critical-wash);
+  color: var(--cf-critical-text);
+}
+
+.xc-check__verdict--unknown {
+  border-color: var(--cf-line-strong);
+  background: var(--cf-surface);
+  color: var(--cf-fg-mute);
+}
+
+.xc-check__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+  padding-left: calc(1.5rem + var(--cf-space-sm));
+}
+
+.xc-check__subject {
+  margin: 0;
+  max-width: var(--cf-measure);
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-check__pair {
+  font-weight: 600;
+  color: var(--cf-fg);
+}
+
+.xc-check__none {
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-sm);
+}
+
+.xc-check__why {
+  margin: 0;
+  max-width: var(--cf-measure);
+  padding-left: calc(1.5rem + var(--cf-space-sm));
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+  line-height: var(--cf-leading-snug);
+}
+
+/*
+ * BOTH SIDES OF EVERY COMPARISON, ON THEIR OWN LINES, IN THE SAME FACE AT THE SAME SIZE.
+ *
+ * Two 66-character hex strings are only comparable by eye when they are stacked and monospaced. Any
+ * other treatment — one of them smaller, one of them in a tooltip, one of them elided in the middle
+ * — makes the comparison the page exists to enable impossible to actually perform.
+ */
+.xc-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--cf-space-2xs);
+  margin: 0;
+}
+
+.xc-side__label {
+  flex: 0 0 12rem;
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-mute);
+}
+
+.xc-side__value {
+  flex: 1 1 20rem;
+  min-width: 0;
+  font-size: var(--cf-text-2xs);
+  overflow-wrap: anywhere;
+}
+
+.xc-side__none {
+  color: var(--cf-fg-mute);
+  font-style: italic;
+  font-size: var(--cf-text-xs);
+}
+
+/* ---- states ------------------------------------------------------------ */
+
+.xc-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cf-space-xs);
+  padding: var(--cf-space-2xl) var(--cf-space-lg);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-lg);
+  text-align: center;
+}
+
+.xc-state--loading {
+  border-style: dashed;
+}
+
+.xc-state--empty {
+  background: var(--cf-bg-raised);
+}
+
+.xc-state--failed {
+  border-color: var(--cf-critical-edge);
+  background: var(--cf-critical-wash);
+}
+
+.xc-state--absent {
+  background: var(--cf-bg-raised);
+}
+
+.xc-state__icon {
+  color: var(--cf-fg-mute);
+}
+
+.xc-state__title {
+  margin: 0;
+  font-size: var(--cf-text-lg);
+  font-weight: 600;
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-state__hint {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+}
+
+.xc-state__action {
+  margin-top: var(--cf-space-2xs);
+}
+
+.xc-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 2px solid var(--cf-line-strong);
+  border-top-color: var(--cf-ember);
+  border-radius: var(--cf-radius-lg);
+  animation: xc-spin 900ms linear infinite;
+}
+
+@keyframes xc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- standing notices --------------------------------------------------- */
+
+.xc-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+  margin-bottom: var(--cf-space-lg);
+  padding: var(--cf-space-sm) var(--cf-space-md);
+  border: 1px solid var(--cf-line);
+  border-left-width: 3px;
+  border-radius: var(--cf-radius);
+  background: var(--cf-bg-raised);
+}
+
+.xc-notice--warn {
+  border-left-color: var(--cf-warn);
+}
+
+/*
+ * The custody notice is the sentence a stranger must not be able to miss, so it is marked with the
+ * accent rather than with an alarm colour. It is not a warning — nothing has gone wrong — it is the
+ * single most important true thing about this surface.
+ */
+.xc-notice--custody {
+  border-left-color: var(--cf-accent);
+}
+
+.xc-notice__title {
+  margin: 0;
+  font-size: var(--cf-text-sm);
+  font-weight: 600;
+}
+
+.xc-notice__body {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+/* ---- narrow ------------------------------------------------------------- */
+
+/*
+ * One breakpoint, and both grids collapse at it. The form is already first in document order, so
+ * collapsing puts the control above the picture on a phone without any reordering — which is the
+ * property that makes `order` unnecessary, and `order` is how a keyboard reader ends up tabbing
+ * through a page in a sequence that does not match what they see.
+ */
+@media (max-width: 60rem) {
+  .xc-swap,
+  .xc-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 44rem) {
+  .xc-main {
+    padding: var(--cf-space-lg) var(--cf-space-md) var(--cf-space-2xl);
+  }
+
+  .xc-head__inner {
+    padding: 0 var(--cf-space-md);
+  }
+
+  .xc-title {
+    font-size: var(--cf-text-3xl);
+  }
+
+  .xc-side__label {
+    flex-basis: 100%;
+  }
+
+  /* The tables carry addresses; below this width they scroll rather than reflow into columns of
+     three characters. */
+  .xc-table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* The block indicator needs room the phone header does not have, and it is a footnote. */
+@media (min-width: 52rem) {
+  .xc-head__block {
+    display: inline-flex;
+  }
+}
+
+/* ---- motion ------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .xc-spinner {
+    animation-duration: 4s;
+  }
+
+  .xc-nav__link,
+  .xc-flip__btn {
+    transition: none;
+  }
+}
