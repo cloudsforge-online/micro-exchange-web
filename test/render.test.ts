@@ -45,17 +45,24 @@ import {
   ethCalls,
   rpcMethods,
   market,
+  CHAIN_NOW,
+  DEMBER,
   EMBER_NEFELI,
   EMBER_SILT,
   FEE_SETTER,
+  FLTC,
   HEARTH,
+  HOLDER,
   IMPOSTOR_PAIR,
   NEFELI,
   OTHER_CHAIN_ID,
   QUIET,
+  RECEIPT_CHAIN_ID,
   SILT,
   WEMBER,
   type ChainFixture,
+  type FixtureReceipt,
+  type FixtureRedemption,
 } from './fixtures.ts'
 
 /** This surface's own address on the mainnet estate. */
@@ -227,7 +234,7 @@ describe('the chain the page is pointed at', () => {
 
   it('names the block every number was read at, on every route', async () => {
     const fixture = chain({ head: 41_207 })
-    for (const path of ['/', '/pools', '/contracts']) {
+    for (const path of ['/', '/pools', '/receipts', '/contracts']) {
       await page(fixture, path, async (screen) => {
         assert.match(screen.text(), /Block\s*#?41,207/, `no block on ${path}`)
       })
@@ -235,8 +242,12 @@ describe('the chain the page is pointed at', () => {
   })
 
   it('repeats that CloudsForge holds nothing, on every route', async () => {
+    // Including `/receipts`, where it is the sentence that most needs qualifying and is qualified —
+    // the footer says the exchange holds nothing, and the page's own warning says a receipt is the
+    // one thing on this surface that CloudsForge does hold. Both are true and both are printed;
+    // dropping the footer there would have been the quieter, worse fix.
     const fixture = chain()
-    for (const path of ['/', '/pools', '/contracts']) {
+    for (const path of ['/', '/pools', '/receipts', '/contracts']) {
       await page(fixture, path, async (screen) => {
         assert.ok(screen.text().includes(NOT_CUSTODIED.slice(0, 44)), `not on ${path}`)
       })
@@ -247,7 +258,7 @@ describe('the chain the page is pointed at', () => {
     // `shell.tsx` leaves `CloudsForgeBar` out on exactly this ground: every route here is public,
     // nothing is stored against an account, and a "Sign in" would suggest otherwise.
     const fixture = chain()
-    for (const path of ['/', '/pools', '/contracts']) {
+    for (const path of ['/', '/pools', '/receipts', '/contracts']) {
       await page(fixture, path, async (screen) => {
         assert.equal(screen.queryByRole('button', /Sign in/), null, `sign-in on ${path}`)
         assert.equal(screen.queryByRole('link', /Sign in/), null, `sign-in link on ${path}`)
@@ -413,6 +424,210 @@ describe('the contracts page', () => {
   })
 })
 
+describe('the receipts page', () => {
+  /**
+   * The chain that carries them. `chain()` defaults to 7411, which has no receipt — so every
+   * scenario here that wants one says so, and the ones that want the absence say nothing.
+   *
+   * BOTH RECEIPTS ARE MODELLED IN EVERY SCENARIO, and a scenario that varies one still passes the
+   * other. The page renders every row `src/lib/receipts.ts` holds for the chain, not the rows this
+   * fixture happens to answer for, so leaving one out does not remove it from the page — it puts a
+   * "could not be read" card on it and fills `unmodelled` with the calls it made trying.
+   */
+  const withReceipts = (options: Parameters<typeof chain>[0] = {}) =>
+    chain({ chainId: RECEIPT_CHAIN_ID, receipts: [FLTC, DEMBER], ...options })
+
+  /**
+   * A verdict, anchored to the question it answers.
+   *
+   * `screen.text()` runs the two together — `…been paid?All settled` — and anchoring is not
+   * pedantry here: the words "fresh" and "covered" both appear in the prose explaining the checks,
+   * so an unanchored `/Fresh/` passes against a page showing `Stale` and the sentence "until a
+   * fresh reserve is attested".
+   */
+  const answers = (question: string, verdict: string): RegExp =>
+    new RegExp(`${question.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\?${verdict}`)
+
+  const COVERED = 'covered by the attested reserve'
+  const FRESH = 'fresh enough to authorise issuing more'
+  const PAID = 'Has everyone who redeemed actually been paid'
+
+  it('SAYS WHOSE PROMISE IT IS BEFORE IT SAYS ANYTHING ELSE', async () => {
+    // The page's whole reason for being separate from `/contracts`. Every other route on this
+    // surface can say nobody can take your coins; this one has to say the opposite, in the first
+    // screenful, in its own voice rather than in a footnote under the numbers.
+    await page(withReceipts(), '/receipts', async (screen) => {
+      assertMounted(screen)
+      const text = screen.text()
+      assert.match(text, /holding a receipt means trusting CloudsForge to still have it/)
+      assert.match(text, /This one is a promise, and the rest of this surface is not/)
+      assert.match(text, /It cannot make the promise good\. It makes breaking it a matter of record/)
+      // Read off the token, not written here — so a wallet showing fLTC shows the same sentence.
+      assert.match(text, /This is a promise by CloudsForge, not a trustless peg/)
+      screen.before(
+        'This one is a promise, and the rest of this surface is not',
+        'What the contract says it is',
+        'the custody warning has to come before the figures it qualifies',
+      )
+    })
+  })
+
+  it('prints the coverage, freshness and settlement checks as words, with both sides', async () => {
+    const fixture = withReceipts()
+    await page(fixture, '/receipts', async (screen) => {
+      const text = screen.text()
+      assert.match(text, answers(COVERED, 'Fully covered'))
+      assert.match(text, answers(FRESH, 'Fresh'))
+      // fLTC has never been redeemed from; the drill has been, and was settled.
+      assert.match(text, answers(PAID, 'Nothing to check'))
+      assert.match(text, answers(PAID, 'All settled'))
+      assert.doesNotMatch(text, answers(PAID, 'Unpaid'))
+
+      // Eight decimals, not eighteen: the fixture says so and the page reads it. A page that
+      // assumed eighteen would print this reserve ten orders of magnitude wrong.
+      assert.match(text, /0 LTC/)
+      assert.ok(
+        ethCalls(screen.api.wire).some((c) => c.to === FLTC.address && c.fn === 'coverage'),
+        'the page printed a coverage verdict without calling coverage()',
+      )
+    })
+  })
+
+  it('SHOWS THE SETTLED TXID, AND NOT THE ASCII THE DEPLOY SCRIPT PRINTED', async () => {
+    // The shipped bug, reproduced as a fixture and asserted against. `redemption(uint256)` returns
+    // `(address, uint256, string, uint64, bytes32)`, so the data ENDS in the middle of the payout
+    // address and its last word is text. Reading from the end printed a settled txid of
+    // `0x6338643261353264623500…` — the ASCII of the last ten characters of the payout address —
+    // and reported a failure against a settlement that was correct on chain.
+    const txid = DEMBER.redemptions[0]?.settledTxid ?? ''
+    await page(withReceipts(), '/receipts', async (screen) => {
+      const text = screen.text()
+      assert.match(text, new RegExp(txid, 'i'))
+      assert.match(text, /a transaction on Hearth Testnet itself/)
+      // The payout address, as itself, in its own column — not smeared into the txid.
+      assert.match(text, new RegExp(HOLDER, 'i'))
+      assert.doesNotMatch(text, /Burnt, not yet paid/)
+    })
+  })
+
+  it('names the drill a test instrument, in the heading, not in a footnote', async () => {
+    await page(withReceipts(), '/receipts', async (screen) => {
+      assert.match(screen.text(), /Test instrument — do not hold/)
+      assert.match(screen.text(), /Nobody should hold one/)
+      // And the issued receipt is not labelled with it.
+      assert.match(screen.text(), /Issued receipt/)
+    })
+  })
+
+  it('reads the reserve addresses off the contract and gives the command to count them', async () => {
+    await page(withReceipts(), '/receipts', async (screen) => {
+      const text = screen.text()
+      for (const address of FLTC.reserveAddresses) {
+        assert.match(text, new RegExp(address), `${address} was not published on the page`)
+      }
+      assert.match(text, /scantxoutset start/)
+      assert.match(text, /no wallet, no import, no index, and nothing of ours in the path/)
+      // The drill's underlying is this chain's own coin, so no Litecoin command is printed for it.
+      assert.match(text, /the check is a balance read on the explorer/)
+    })
+  })
+
+  it('CALLS A STALE ATTESTATION STALE, judged by the chain and not by this browser', async () => {
+    // The attestation is older than `maxAttestationAge`, so `coverage()`'s own `fresh` word is
+    // false. The page prints the contract's answer rather than doing the arithmetic itself — which
+    // is what makes it the same answer the issue path gets.
+    const fixture = withReceipts({ now: CHAIN_NOW + 200_000 })
+    await page(fixture, '/receipts', async (screen) => {
+      assert.match(screen.text(), answers(FRESH, 'Stale'))
+      assert.match(screen.text(), /refuse to mint anything until it is/)
+      assert.doesNotMatch(screen.text(), answers(FRESH, 'Fresh'))
+      // Stale is not a shortfall, and the page keeps the two apart: what is issued is still fully
+      // covered by the last figure recorded, which is a different sentence from "it is enough now".
+      assert.match(screen.text(), answers(COVERED, 'Fully covered'))
+    })
+  })
+
+  it('LEAVES AN UNPAID REDEMPTION VISIBLE, as burnt supply with nothing recorded against it', async () => {
+    const owing: FixtureReceipt = {
+      ...DEMBER,
+      redemptions: [{ ...(DEMBER.redemptions[0] as FixtureRedemption), settledTxid: null }],
+    }
+    await page(withReceipts({ receipts: [FLTC, owing] }), '/receipts', async (screen) => {
+      const text = screen.text()
+      assert.match(text, answers(PAID, 'Unpaid'))
+      assert.match(text, /Burnt, not yet paid/)
+      assert.match(text, /is owed and has not been recorded as paid/)
+    })
+  })
+
+  it('refuses to fall back to a list of its own when no reserve address is published', async () => {
+    // With none published there is no way to check the backing without asking CloudsForge — which
+    // is the position the whole design exists to avoid, so the page says that rather than going
+    // quiet or reaching for a constant of its own.
+    const unpublished: FixtureReceipt = { ...FLTC, reserveAddresses: [] }
+    await page(withReceipts({ receipts: [unpublished, DEMBER] }), '/receipts', async (screen) => {
+      assert.match(screen.text(), /The contract publishes no reserve addresses/)
+      assert.match(screen.text(), /the issuer’s unverifiable claim that it is/)
+    })
+  })
+
+  it('reports a receipt that would not answer as a FAULT IN THE READING, not as a shortfall', async () => {
+    const broken = withReceipts({ refuses: ['eth_call'] })
+    await withScreen(app(), { url: `${AT}/receipts`, routes: broken.routes }, async (screen) => {
+      await screen.settle()
+      assert.match(screen.text(), /fLTC could not be read/)
+      assert.match(screen.text(), /a fault in the reading, not a finding about the reserve/)
+      assert.doesNotMatch(screen.text(), /Short/)
+      assert.doesNotMatch(screen.text(), /Fully covered/)
+    })
+  })
+
+  it('RENDERS THE MAINNET ABSENCE AS A MEASUREMENT, AND MAKES NO eth_call FOR IT', async () => {
+    // Forge Network carries no receipt, and that is a reading rather than a gap: the addresses
+    // custody holds Litecoin at were scanned, the total came back zero, and nothing was deployed.
+    // "Coming soon" would turn a deliberate refusal into an unfinished feature.
+    const fixture = chain()
+    await page(fixture, '/receipts', async (screen) => {
+      const text = screen.text()
+      assert.match(text, /There is no LTC receipt on this network, and that was measured/)
+      assert.match(text, /a receipt issued against nothing is the one thing this design refuses/)
+      assert.match(text, /#3,161,029/)
+      assert.match(text, /0x9173116ba259641a250352ad99dfcdf3a49a996e9cbc1cf3976c313ad1a785eb/)
+      assert.match(text, /2026-08-16/)
+      assert.match(text, /scantxoutset start/)
+      assert.doesNotMatch(text, /coming soon/i)
+      // There is no contract to read, so nothing was read. A page that called anyway would be
+      // reporting a deliberate absence as an outage — micro-org#406, on a different console.
+      assert.deepEqual(
+        ethCalls(screen.api.wire),
+        [],
+        'the page asked the chain about a receipt that does not exist on it',
+      )
+    })
+  })
+
+  it('points at the network that DOES publish the addresses, derived rather than written', async () => {
+    await page(chain(), '/receipts', async (screen) => {
+      assert.match(screen.text(), /published on chain by the fLTC contract/)
+      assert.match(screen.text(), new RegExp(String(RECEIPT_CHAIN_ID)))
+      assert.match(screen.text(), /Switch networks in the header above to read them there/)
+      // And the addresses themselves are NOT on this page, on either network — the promise this
+      // page makes about not baking custody addresses into a bundle.
+      for (const address of FLTC.reserveAddresses) {
+        assert.doesNotMatch(screen.text(), new RegExp(address))
+      }
+    })
+  })
+
+  it('distinguishes a network nobody has measured from one that was measured empty', async () => {
+    await page(chain({ chainId: OTHER_CHAIN_ID }), '/receipts', async (screen) => {
+      assert.match(screen.text(), /No receipt has been measured on this network/)
+      assert.match(screen.text(), /it is the absence of anyone having looked/)
+      assert.doesNotMatch(screen.text(), /and that was measured/)
+    })
+  })
+})
+
 describe('the shell', () => {
   it('renders something honest at an address that is not a route', async () => {
     // nginx answers unknown paths with `error_page 404 /index.html`, so the bundle mounts under the
@@ -427,7 +642,7 @@ describe('the shell', () => {
 
   it('mounts every route without a console error', async () => {
     const fixture = chain()
-    for (const path of ['/', '/pools', `/pools/${EMBER_NEFELI.address}`, '/contracts']) {
+    for (const path of ['/', '/pools', `/pools/${EMBER_NEFELI.address}`, '/receipts', '/contracts']) {
       const screen = await mount(app(), { url: `${AT}${path}`, routes: fixture.routes })
       try {
         await screen.settle()

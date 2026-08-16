@@ -1138,6 +1138,151 @@ body {
   line-height: var(--cf-leading-snug);
 }
 
+/* ---- receipts: the one page about a promise ------------------------------ */
+
+/*
+ * A receipt panel is a panel, and takes the same box. What it adds is a heading that has to carry
+ * three things at once — the symbol, what one of them stands for, and whether anybody should hold
+ * one — without any of the three being reachable only by hovering something.
+ */
+.xc-receipt__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cf-space-sm);
+  margin-bottom: var(--cf-space-2xs);
+}
+
+.xc-receipt__title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+  margin: 0;
+  font-family: var(--cf-font-display);
+  font-size: var(--cf-text-xl);
+  letter-spacing: var(--cf-tracking-tight);
+}
+
+.xc-receipt__for {
+  color: var(--cf-fg-dim);
+  font-family: var(--cf-font-sans);
+  font-size: var(--cf-text-sm);
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+/*
+ * The kind badge borrows the verdict's shape rather than inventing a second one, because it is the
+ * same kind of statement: a word this page is standing behind. `--drill` takes the CRITICAL ramp and
+ * not the warn ramp — a warning reads as "be careful with this asset", and the true sentence is
+ * "this is not an asset". The two ramps are the difference between caution and refusal.
+ */
+.xc-receipt__kind {
+  flex: 0 0 auto;
+  padding: var(--cf-space-3xs) var(--cf-space-2xs);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-sm);
+  background: var(--cf-bg-raised);
+  color: var(--cf-fg-dim);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+}
+
+.xc-receipt__kind--drill {
+  border-color: var(--cf-critical-edge);
+  background: var(--cf-critical-wash);
+  color: var(--cf-critical-text);
+}
+
+.xc-receipt__what {
+  max-width: var(--cf-measure);
+  margin: 0 0 var(--cf-space-md);
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+/*
+ * The issuer's own sentence, set as a quotation because that is what it is: text this page did not
+ * write, read from the contract, attributable to somebody. Setting it in the page's own voice would
+ * be the one typographic decision on this surface that actually changes what is being claimed.
+ */
+.xc-promise {
+  margin: 0 0 var(--cf-space-lg);
+  padding-left: var(--cf-space-md);
+  border-left: 3px solid var(--cf-accent);
+}
+
+.xc-promise__quote {
+  max-width: var(--cf-measure);
+  margin: 0 0 var(--cf-space-2xs);
+  font-family: var(--cf-font-display);
+  font-size: var(--cf-text-lg);
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-promise__by {
+  max-width: var(--cf-measure);
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+  line-height: var(--cf-leading-snug);
+}
+
+/* The addresses the contract publishes. Numbered, because the count is the thing a reader is about
+   to check against, and full width because a reserve address is transcribed, never skimmed. */
+.xc-reserve {
+  margin: 0 0 var(--cf-space-md);
+  padding-left: var(--cf-space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-3xs);
+}
+
+.xc-reserve__item {
+  overflow-wrap: anywhere;
+  font-size: var(--cf-text-sm);
+}
+
+/*
+ * The command block. It is `code` in a sunken box so it reads as something to be COPIED rather than
+ * something to be read, and it wraps rather than scrolls: a command that runs off the side of a box
+ * gets pasted half-length, and a half-length `scantxoutset` is a scan of the wrong descriptor.
+ */
+.xc-scan {
+  margin: 0 0 var(--cf-space-md);
+}
+
+.xc-scan__intro {
+  max-width: var(--cf-measure);
+  margin: 0 0 var(--cf-space-2xs);
+  color: var(--cf-fg-dim);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-scan__cmd {
+  display: block;
+  padding: var(--cf-space-sm) var(--cf-space-md);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-sm);
+  background: var(--cf-bg-sunken);
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* A burnt receipt with nothing recorded against it. The critical ramp, for the same reason the
+   drill badge takes it: this is not a caution, it is a debt. */
+.xc-owing {
+  color: var(--cf-critical-text);
+  font-size: var(--cf-text-sm);
+  font-weight: 600;
+}
+
 /* ---- narrow ------------------------------------------------------------- */
 
 /*

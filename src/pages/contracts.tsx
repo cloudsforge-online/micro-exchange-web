@@ -33,9 +33,9 @@
  * of a swap form is not linkable. `/contracts` is in `ROUTES`, in the router, and in nginx.conf.
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
-import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { CloudsForgeHosts } from '@cloudsforge/ui'
+import { Check, Side } from '../components/checks.tsx'
 import { Failed, Loading, NoEndpoint, NoExchange } from '../components/states.tsx'
 import { useChain } from '../lib/chain.tsx'
 import { pairFor, type Deployment } from '../lib/dex.ts'
@@ -387,84 +387,8 @@ function Checks({
   )
 }
 
-type Verdict = 'match' | 'differ' | 'unknown' | 'off' | 'on'
-
-const VERDICT_WORD: Readonly<Record<Verdict, string>> = {
-  match: 'They match',
-  differ: 'They differ',
-  unknown: 'Not answered',
-  off: 'Off',
-  on: 'On',
-}
-
-/**
- * One check: the question, the verdict, the two values, and what the answer would mean.
- *
- * The verdict is a WORD, not a colour and not a symbol. A tick renders identically whether the page
- * checked anything or decided to draw one, and a reader who is here because they are suspicious is
- * owed a sentence.
- */
-function Check({
-  n,
-  question,
-  verdict,
-  why,
-  children,
-}: {
-  readonly n: number
-  readonly question: string
-  readonly verdict: Verdict
-  readonly why: string
-  readonly children: ReactNode
-}) {
-  const bad = verdict === 'differ' || verdict === 'on'
-  return (
-    <li className="xc-check">
-      <div className="xc-check__head">
-        {/* The numbering is real: these are ordered by what a later one depends on. Check 2 is
-            meaningless if check 1 failed, and check 3 assumes both. */}
-        <span className="xc-check__n cf-num" aria-hidden="true">
-          {n}
-        </span>
-        <h3 className="xc-check__question">{question}</h3>
-        <span
-          className={`xc-check__verdict${bad ? ' xc-check__verdict--bad' : verdict === 'unknown' ? ' xc-check__verdict--unknown' : ''}`}
-        >
-          {VERDICT_WORD[verdict]}
-        </span>
-      </div>
-      <div className="xc-check__body">{children}</div>
-      <p className="xc-check__why">{why}</p>
-    </li>
-  )
-}
-
-function Side({
-  label,
-  value,
-  link,
-}: {
-  readonly label: string
-  readonly value: string | null
-  readonly link?: CloudsForgeHosts
-}) {
-  return (
-    <p className="xc-side">
-      <span className="xc-side__label">{label}</span>
-      {value === null ? (
-        <span className="xc-side__none">no answer</span>
-      ) : link !== undefined ? (
-        <a
-          className="cf-num xc-side__value"
-          href={explorerAddressUrl(link, value)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {value}
-        </a>
-      ) : (
-        <span className="cf-num xc-side__value">{value}</span>
-      )}
-    </p>
-  )
-}
+/*
+  `Check`, `Side` and the verdict vocabulary used to live here — this page is where the idiom was
+  invented — and now live in `components/checks.tsx` because `pages/receipts.tsx` makes the same
+  kind of claim and a second copy would drift into a second voice.
+*/
