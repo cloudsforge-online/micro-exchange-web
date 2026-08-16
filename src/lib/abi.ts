@@ -283,9 +283,26 @@ export const SIG = Object.freeze({
   // The two swap entry points this surface builds. `SupportingFeeOnTransferTokens` is deliberately
   // absent: no token in this estate takes a transfer fee, and the variant returns nothing, so a UI
   // that used it could not show the reader what they received.
+  //
+  // ── THE THREE MARKERS BELOW, ARGUED ONCE ────────────────────────────────────────────────────
+  //
+  // The estate's secret-hygiene check reads a property name through `is_cred()`, which normalises
+  // camelCase and matches `_TOKENS_`. In every other repository a `token` in a property name means
+  // a bearer credential, and the check is right to stop on one bound to a long string literal — it
+  // is the shape beacon used to put a real password in a public repository. Here `Tokens` means
+  // ERC-20, this table's values are Solidity function signatures, and a function signature is the
+  // most public thing a contract has: it is hashed to a selector and broadcast in the calldata of
+  // every transaction that uses it. There is nothing to leak and nothing to rotate.
+  //
+  // Each line still carries its own reason rather than one blanket suppression, because the marker
+  // is per-line by design and a block-wide exemption would silently cover the next property added
+  // here — which might not be a signature at all.
+  // secret-hygiene: allow a Solidity function signature; `Tokens` here is ERC-20, not a bearer token
   swapExactTokensForTokens:
     'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)',
+  // secret-hygiene: allow the router's native-in entry point, named for what it swaps, not a credential
   swapExactETHForTokens: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+  // secret-hygiene: allow the native-out entry point; the literal is public calldata on every swap
   swapExactTokensForETH: 'swapExactTokensForETH(uint256,uint256,address[],address,uint256)',
   // Wrapping, for the native coin.
   deposit: 'deposit()',
