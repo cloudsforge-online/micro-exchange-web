@@ -1,27 +1,50 @@
 /**
- * The chrome: the logo, the surface name, the navigation, the network switcher, the head block, the
- * page, and the two standing notices.
+ * The chrome: the company bar, the surface navigation, the head block, the page, and the two
+ * standing notices.
  *
  * ════════════════════════════════════════════════════════════════════════════════════════════════
- * `CloudsForgeBar` IS NOT MOUNTED HERE, AND THE REASON IS ABOUT THIS PRODUCT RATHER THAN ABOUT THE
- * REGISTRY.
+ * ── 2026-08-16: `CloudsForgeBar` IS MOUNTED HERE NOW, AND THIS RECORDS WHY THE OLD ARGUMENT LOST
  *
- * The bar always renders an account control, and `AccountMenu` shows a "Sign in" button whenever
- * `account.signedIn` is false (`ui/packages/ui/src/index.tsx`). On this surface that button is not
- * a dead end, it is a category error — and a more serious one than it was on the pool console:
+ * This file used to open with a long case AGAINST the bar. It ran: the bar always renders an
+ * account control; `AccountMenu` shows a "Sign in" whenever `account.signedIn` is false
+ * (`ui/packages/ui/src/index.tsx`); and on this surface that button is not a dead end but a
+ * category error, because
  *
  *   - THIS SURFACE CALLS NO CLOUDSFORGE SERVICE AT ALL. There is no `micro-exchange`. Every number
  *     on every page comes from a public JSON-RPC endpoint over `eth_call`, and a CloudsForge
- *     session is not a credential any chain node has ever heard of. `lib/hosts.ts` has no
- *     `apiBase()` for the same reason.
+ *     session is not a credential any chain node has ever heard of. `lib/hosts.ts` still has no
+ *     `apiBase()` for exactly that reason.
  *   - The identity that matters here is an ADDRESS IN THE READER'S OWN WALLET, which CloudsForge
  *     does not issue, cannot revoke and has no record of. Offering to sign somebody in beside the
  *     Connect button would suggest the two are alternatives. They are not: one of them can sign a
  *     swap and the other cannot.
  *
- * So a "Sign in" here would suggest that signing in would show the reader something. It would not.
- * `test/shared-chrome.test.ts` pins that reason and `test/render.test.ts` asserts no page here
- * offers the words at all.
+ * Both premises are still true and neither is deleted — they are why `lib/auth.tsx` gates nothing
+ * and why no page in this bundle reads the session. What was wrong was the conclusion. The owner,
+ * arriving at this surface the way a reader does:
+ *
+ *   "i tried url directly its open but it has no login bar on top"
+ *
+ * The bar is not an authorisation mechanism. It is the estate's chrome: the product switcher that
+ * gets you to the other twelve surfaces, the network switcher, the CloudsForge home link, and the
+ * handle of whoever is signed in. Every other surface has it. A page that drops it does not read as
+ * "this page needs no account" — it reads as a page that fell off the estate, which is the precise
+ * impression a stranger must not form about the one page in the ecosystem that handles their money.
+ *
+ * The fix for two identities that are easy to confuse is to show both and label them, not to hide
+ * the one the rest of the estate is built on. The wallet control stays on the swap form, beside the
+ * trade it authorises; the account control sits in the chrome, where every other surface's is.
+ *
+ * `test/shared-chrome.test.ts` now pins the presence and the reasoning, and `test/render.test.ts`
+ * asserts that no route in this bundle is gated by the session it now reads.
+ *
+ * ── WHAT LEFT `xc-head` WHEN THE BAR ARRIVED ─────────────────────────────────────────────────
+ *
+ * The logo, the separator and the `NetworkSwitcher`. All three were in this header only because the
+ * bar was absent — the bar carries a CloudsForge home link and the network switcher itself, and two
+ * network switchers stacked vertically is not a smaller bug than none. What is left below the bar
+ * is what is genuinely this surface's own: its name, its pages, and the block its numbers were read
+ * at.
  *
  * ── THE HEAD BLOCK IS IN THE HEADER, AND THAT IS A DECISION ABOUT TRUST ───────────────────────
  *
@@ -33,18 +56,18 @@
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
 import {
+  CloudsForgeBar,
   CloudsForgeFooter,
-  CloudsForgeLogo,
   CookieBanner,
   MainRegion,
-  NetworkSwitcher,
   SkipLink,
-  TestnetBand,
+  miningOnHub,
 } from '@cloudsforge/ui'
 import { applyHead, surfaceMeta } from '@cloudsforge/ui/seo'
 import { useEffect, useState } from 'react'
 import { surface } from '@cloudsforge/ui/surfaces'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useSession } from '../lib/auth.tsx'
 import { useChain } from '../lib/chain.tsx'
 import { formatBlock } from '../lib/format.ts'
 import { hosts, placementIsKnown, PRODUCT, SURFACE_DESCRIPTION } from '../lib/hosts.ts'
@@ -65,6 +88,7 @@ export function AppShell() {
   // `setViewedNetwork` runs first in the handler below so the remounted tree reads the new value
   // on its very first render.
   const [viewed, setViewed] = useState<ViewedNetwork>(viewedNetwork())
+  const { account, signIn, signOut } = useSession()
   const chain = useChain()
   const known = placementIsKnown()
   const estate = hosts()
@@ -81,17 +105,38 @@ export function AppShell() {
       <DocumentMeta />
 
       {/*
-        The amber band, mounted directly for the same reason the switcher below is. It follows the
-        SELECTED network rather than the hostname, which is the property that makes viewing the
-        other estate safe: testnet numbers under a mainnet address bar are never unmarked.
+        THE ESTATE'S BAR. It carries the product switcher (Forge Exchange is an entry in it as of
+        2026-08-16 — `inSwitcher: true` in `ui/packages/ui/src/surfaces.ts`, last in the
+        customer-facing run), the CloudsForge home link, the browser-miner control, the reader's
+        account, the network switcher, and the amber testnet band beneath itself.
+
+        `networkSwitch` carries `onSelect`, which is what makes this surface VIEW the other network
+        in place rather than teleport to a second deployment of itself. The choice re-points which
+        chain node this page READS through `lib/viewed.ts` and `lib/rpc.ts`, and the `key` on the
+        Outlet below remounts the tree so every read is actually made again. Nothing is stored —
+        module memory, per tab.
+
+        The band comes from the bar and follows the SELECTED network rather than the hostname,
+        which is the property that makes viewing the other estate safe: testnet numbers under a
+        mainnet address bar are never unmarked. It used to be mounted here directly because the bar
+        was absent; two of them would not have been a smaller bug than none.
       */}
-      <TestnetBand network={viewed} />
+      <CloudsForgeBar
+        current={PRODUCT}
+        account={account}
+        onSignIn={() => signIn()}
+        onSignOut={signOut}
+        mining={miningOnHub(estate.hub)}
+        networkSwitch={{
+          selected: viewed,
+          onSelect: (n) => {
+            setViewedNetwork(n)
+            setViewed(n)
+          },
+        }}
+      />
       <header className="xc-head">
         <div className="xc-head__inner">
-          <a className="xc-head__logo" href={estate.site} aria-label="CloudsForge home">
-            <CloudsForgeLogo size={20} />
-          </a>
-          <span className="xc-head__sep" aria-hidden="true" />
           <span className="xc-head__name">{SURFACE_NAME}</span>
           <nav className="xc-nav" aria-label="Exchange pages">
             {NAV.map((item) => (
@@ -121,26 +166,6 @@ export function AppShell() {
             <span className="xc-head__block-label">Block</span>{' '}
             <span className="cf-num">{formatBlock(chain.head)}</span>
           </span>
-          {/*
-            THE NETWORK SWITCHER, MOUNTED DIRECTLY, FOR THE SAME REASON THIS HEADER IS.
-
-            `CloudsForgeBar` is out of this surface on the grounds set out at the top of this file,
-            and it is the bar that normally carries this control — so leaving it to the bar would
-            have meant this surface alone could not be read on the other network (micro-org#459).
-            It hides itself off-registry, so a local stack sees nothing.
-
-            `onSelect` rather than a navigation: the choice re-points which chain node this page
-            READS through `lib/viewed.ts` and `lib/rpc.ts`, and the `key` on the Outlet below
-            remounts the tree so every read is actually made again. Nothing is stored — module
-            memory, per tab.
-          */}
-          <NetworkSwitcher
-            selected={viewed}
-            onSelect={(n) => {
-              setViewedNetwork(n)
-              setViewed(n)
-            }}
-          />
         </div>
       </header>
 
@@ -172,11 +197,14 @@ export function AppShell() {
         an offer. A footer is exactly where a claim survives its own truth, so the only claims that
         belong in one are the ones that cannot go stale.
 
-        No `account` is passed, which hides every `adminOnly` surface. That is the correct default
-        here and not an omission: nobody is ever signed in on this surface — see the header.
+        `account` IS passed as of 2026-08-16, and it used to be deliberately withheld: the note here
+        read "nobody is ever signed in on this surface". Somebody can be now, and a footer that
+        hides the operator tools from an operator the bar directly above it is greeting by name is
+        the drift a shared component exists to prevent.
       */}
       <CloudsForgeFooter
         current={PRODUCT}
+        account={account}
         note={
           <>
             Forge Exchange is a set of contracts on Hearth. CloudsForge deployed them and holds no

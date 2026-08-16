@@ -254,14 +254,40 @@ describe('the chain the page is pointed at', () => {
     }
   })
 
-  it('offers no sign-in anywhere, because there is nothing to sign in to', async () => {
-    // `shell.tsx` leaves `CloudsForgeBar` out on exactly this ground: every route here is public,
-    // nothing is stored against an account, and a "Sign in" would suggest otherwise.
+  it('offers a sign-in on every route, and GATES none of them behind it', async () => {
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // This test used to assert the opposite — "offers no sign-in anywhere, because there is nothing
+    // to sign in to" — on the ground that `shell.tsx` left `CloudsForgeBar` out: every route here is
+    // public, nothing is stored against an account, and a "Sign in" would suggest otherwise.
+    //
+    // The premise survived and the conclusion did not. The bar is the estate's chrome rather than an
+    // authorisation mechanism, and a page without it reads as a page that fell off the estate — the
+    // one impression a stranger must not form about the page that handles their money. So the
+    // control is here, and what this test now holds is the half that was always the point: A READER
+    // WHO NEVER PRESSES IT SEES EVERYTHING. Every number below is rendered while `account.signedIn`
+    // is false, on all four routes.
+    //
+    // The DOM node is deliberately never passed to `assert.equal` as an actual value. happy-dom
+    // elements carry a reference to their own window, and node:test formatting the diff for one
+    // walks that graph — the previous shape of this test took 133 seconds to report a one-line
+    // failure. Booleans and strings only, from here on.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
     const fixture = chain()
     for (const path of ['/', '/pools', '/receipts', '/contracts']) {
       await page(fixture, path, async (screen) => {
-        assert.equal(screen.queryByRole('button', /Sign in/), null, `sign-in on ${path}`)
-        assert.equal(screen.queryByRole('link', /Sign in/), null, `sign-in link on ${path}`)
+        assert.ok(
+          screen.queryByRole('button', /Sign in/) !== null ||
+            screen.queryByRole('link', /Sign in/) !== null,
+          `no sign-in control on ${path}; the shared bar is not rendering its account menu`,
+        )
+        // ...and the page under it is a page, not a wall. `assertMounted` is the same check every
+        // scenario in this file opens with, so "renders for a stranger" means exactly what it means
+        // everywhere else here.
+        assertMounted(screen)
+        assert.ok(
+          screen.text().includes(NOT_CUSTODIED.slice(0, 44)),
+          `the standing notice is missing on ${path} for a signed-out reader`,
+        )
       })
     }
   })

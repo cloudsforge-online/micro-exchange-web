@@ -13,14 +13,29 @@
  * and the analytics measurement id — are `<meta>` tags in index.html, which the Dockerfile stamps
  * into a copy of the file rather than into the JavaScript.
  *
- * ── THE SECOND HALF: THIS BUNDLE CARRIES NO CREDENTIAL AND SENDS NONE ─────────────────────────
+ * ── THE SECOND HALF: NO CREDENTIAL TRAVELS TO A CHAIN, AND ONE FILE MAY HOLD ONE ──────────────
  *
  * There is no service behind this surface. Every read is a JSON-RPC call to a Hearth node, which
  * takes no bearer token from anybody, and every write is an `eth_sendTransaction` handed to the
- * reader's own wallet. So there is nothing to send and nothing to store. Asserted as an ABSENCE,
- * because the reflex when a request is refused is to add a header, and the tempting place to add it
- * — an `Authorization` in an nginx `proxy_pass` — puts a CloudsForge service credential inside an
- * image that is built once and promoted to every environment, which is a published credential.
+ * reader's own wallet.
+ *
+ * This section used to conclude from that: "there is nothing to send and nothing to store", and it
+ * forbade the words outright across `src/`. On 2026-08-16 the shared bar arrived — the owner: "it
+ * has no login bar on top" — and the bar greets a reader by name, which is one `GET /auth/me`
+ * against identity and therefore one bearer. So the rule narrowed rather than lifted, to the one
+ * sentence that was always doing the work:
+ *
+ *   A BEARER NEVER TRAVELS TO A CHAIN NODE, AND EXACTLY ONE FILE MAY HOLD ONE.
+ *
+ * `src/lib/session.ts` is that file, and the tests below hold both halves: everything else in `src/`
+ * is still checked as an absence, and `src/lib/rpc.ts` — the only module that composes a chain
+ * endpoint — is checked separately and more strictly, because a credential leaking into a JSON-RPC
+ * request would hand a CloudsForge session to whatever is answering on `rpc.<apex>`.
+ *
+ * The nginx half is UNCHANGED and unconditional: the reflex when a request is refused is to add a
+ * header, and the tempting place to add it — an `Authorization` in an nginx `proxy_pass` — puts a
+ * CloudsForge service credential inside an image that is built once and promoted to every
+ * environment, which is a published credential.
  *
  * ── THE THIRD HALF, AND ON THIS SURFACE IT IS THE EXPENSIVE ONE ───────────────────────────────
  *
@@ -173,22 +188,67 @@ test('THERE IS NO SIGNER IN HERE, AND NO KEY FOR ONE TO USE', () => {
   assert.match(wallet.text, /method: 'eth_sendTransaction'/)
 })
 
-test('THIS BUNDLE HOLDS NO CREDENTIAL AND SENDS NONE', () => {
+/**
+ * The ONE module in `src/` allowed to know what a CloudsForge session is.
+ *
+ * Named here rather than matched by a pattern, so that a second file growing a bearer is a failure
+ * rather than a rename away from passing.
+ */
+const SESSION = 'src/lib/session.ts'
+
+test('ONE FILE HOLDS THE SESSION, AND NOTHING ELSE IN THIS BUNDLE HAS HEARD OF ONE', () => {
   for (const { path, text } of SRC) {
+    if (path === SESSION) continue
     for (const forbidden of [/\bAuthorization\b/, /\bBearer\b/, /localStorage/, /document\.cookie/]) {
       const hit = text.match(forbidden)
       assert.equal(
         hit,
         null,
-        `${path} uses ${JSON.stringify(hit?.[0])}. Every route micro-pool serves is anonymous, so ` +
-          `a credential here would be a secret shipped in a public bundle to authenticate nothing.`,
+        `${path} uses ${JSON.stringify(hit?.[0])}. Every read this bundle makes is an anonymous ` +
+          `eth_call, so a credential here would be a secret shipped in a public bundle to ` +
+          `authenticate nothing. The one exception is ${SESSION}, which the shared bar reads.`,
       )
     }
   }
+
+  // The exception is real, so it is asserted rather than assumed: if the session module ever stops
+  // holding a bearer, the `continue` above is silently forgiving a file that no longer needs it.
+  const session = SRC.find((s) => s.path === SESSION)
+  assert.ok(session, `${SESSION} has moved; this check reads it by name`)
+  assert.match(session.text, /\bBearer\b/)
+
   // sessionStorage IS used, once, for the pseudonymous per-tab observability id. It dies with the
   // tab, it says nothing about who the reader is, and Lantern has no user column to put it in.
+  // `session.ts` deliberately does NOT appear here: the once-per-tab silent sign-in probe keeps its
+  // own mark under `cf.ssoProbed`, but it keeps it inside `@cloudsforge/ui`, not in this bundle.
   const withSession = SRC.filter((s) => /sessionStorage/.test(s.text)).map((s) => s.path)
   assert.deepEqual(withSession, ['src/lib/obs.ts'])
+})
+
+test('NO CREDENTIAL TRAVELS TO A CHAIN NODE, WHICH IS THE HALF THAT COULD COST SOMETHING', () => {
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // `src/lib/rpc.ts` is the only module in this bundle that composes an endpoint out of the page's
+  // apex, and the thing it composes is a PUBLIC JSON-RPC address. A bearer reaching it would hand a
+  // live CloudsForge session to whatever answers on `rpc.<apex>` — which, on an unregistered
+  // placement, is by definition not ours. The test above would already catch it; this one states
+  // the consequence, so the next reader knows which of the two absences is the expensive one.
+  //
+  // It is also the reason `src/lib/session.ts` reads `hosts().nimbus` and nothing else: the session
+  // module names the identity service by name, never the chain, and never the viewed-network
+  // endpoint that `rpc.ts` derives.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const rpc = SRC.find((s) => s.path === 'src/lib/rpc.ts')
+  assert.ok(rpc, 'src/lib/rpc.ts has moved; this check reads it by name')
+  assert.doesNotMatch(rpc.text, /authorization|Bearer|accessToken|session\.ts/i)
+
+  const session = SRC.find((s) => s.path === SESSION)
+  assert.ok(session)
+  assert.doesNotMatch(
+    session.text,
+    /rpcUrl|eth_call|\brpc\.ts\b/,
+    'the session module names the chain. It may name identity and nothing else.',
+  )
+  assert.match(session.text, /hosts\(\)\.nimbus/)
 })
 
 test('the image proxies nothing, so no credential can be added to it later', () => {

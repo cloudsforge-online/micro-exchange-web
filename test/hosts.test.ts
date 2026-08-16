@@ -76,11 +76,25 @@ test('THE REGISTRY SAYS THIS SURFACE SERVES A PAGE, WHICH IS WHAT MADE THIS REPO
   // aspirational.
   assert.equal(exchange.viewsAnyNetwork, true)
 
-  // `inSwitcher: false` stays. The switcher is what a signed-in customer opens to choose between
-  // products they have an account on, and THERE IS NO ACCOUNT HERE: every read is an anonymous
-  // `eth_call` and every write is signed by the reader's own wallet. The exchange is somewhere
-  // people are sent — from the footer, from Forge Create, from a token's page.
-  assert.equal(exchange.inSwitcher, false)
+  // `inSwitcher` was FALSE, on this argument, which is preserved because it is the argument that
+  // lost: "the switcher is what a signed-in customer opens to choose between products they have an
+  // account on, and THERE IS NO ACCOUNT HERE: every read is an anonymous `eth_call` and every write
+  // is signed by the reader's own wallet. The exchange is somewhere people are sent — from the
+  // footer, from Forge Create, from a token's page."
+  //
+  // Every clause of that is still true and the conclusion was still wrong, because the switcher is
+  // not a list of things you have an account on — `explorer` and `network` are in it and neither
+  // has ever had one. It is the estate's map. A product missing from it is a product a reader
+  // cannot get to without already knowing its address, which is exactly how this was reported:
+  //
+  //   "forge exchange is not available in the product menu"
+  //
+  // Flipping this DEMANDED an accent of its own, because `surfaces.test.ts` holds every switcher
+  // entry to a distinct hue — #dcde5e, from `ui/scripts/find_exchange_accent.mjs`. The row sits
+  // last in the customer-facing run, and `test/shared-chrome.test.ts` holds the pair from the
+  // frontend's side.
+  assert.equal(exchange.inSwitcher, true)
+  assert.equal(exchange.accent, '#dcde5e')
 
   // No mark of its own, which is why public/ borrows CloudsForge's chrome. See brand-chrome.test.
   assert.equal(exchange.markId, null)
