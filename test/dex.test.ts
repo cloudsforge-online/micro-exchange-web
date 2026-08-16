@@ -248,7 +248,13 @@ test('THE DEPLOYMENT TABLE IS KEYED BY CHAIN ID, AND HAS EXACTLY THE CHAINS IT H
   // init code hash does NOT, and must not — the pair contract is the same and `bytecodeHash:
   // 'none'` means editing the factory cannot perturb it, which is what lets one constant derive the
   // live pair on both chains.
-  const [main, test_] = DEPLOYMENTS
+  // Looked up rather than destructured. `DEPLOYMENTS[0]` is `Deployment | undefined` under
+  // `noUncheckedIndexedAccess`, and the idiomatic fix — a `!` on each — is a non-null assertion
+  // about the very table this test exists to check. `assert.ok` narrows and FAILS THE TEST if the
+  // table is short, which is the same claim made in the direction that reports it.
+  const main = deploymentFor(7411)
+  const test_ = deploymentFor(7412)
+  assert.ok(main !== null && test_ !== null, 'both chains are in the table')
   for (const field of ['factory', 'router', 'wrapped', 'multicall'] as const) {
     assert.notEqual(main[field], test_[field], `${field} is the same address on both chains`)
   }
