@@ -250,15 +250,52 @@ jobs:
         # an explorer will hand over for nothing. Asserted as an ABSENCE, because the reflex is to
         # add one back — and comments are stripped because src/components/shell.tsx NAMES what it
         # refuses and why.
+        #
+        # This step used to forbid `AuthProvider` and `Authorization` outright, on the grounds that
+        # a surface calling no CloudsForge service has nothing to sign in TO. Half of that is still
+        # true and is still enforced below. The other half was wrong: the shared bar is the estate's
+        # CHROME — product switcher, network switcher, the reader's handle — and a page that drops
+        # it does not read as "needs no account", it reads as a page that fell off the estate. So a
+        # session may exist. It may live in exactly ONE named file, it may never reach the chain,
+        # and no route may branch on it.
         run: |
           set -uo pipefail
           strip() { perl -0pe 's{\{/\*.*?\*/\}}{}gs; s{/\*.*?\*/}{}gs; s{^\s*//.*$}{}gm' "$1"; }
           fail=0
+
+          # 1. No gate, anywhere. This is the rule the repository exists for and it has not moved.
           for f in $(find src -name '*.ts' -o -name '*.tsx'); do
-            if strip "$f" | grep -nE 'ProtectedRoute|RequireAuth|AuthProvider|Authorization' | sed "s|^|$f:|" | grep .; then fail=1; fi
+            if strip "$f" | grep -nE 'ProtectedRoute|RequireAuth|RequireSession|redirectToLogin' | sed "s|^|$f:|" | grep .; then fail=1; fi
           done
           [ "$fail" = 0 ] || { echo "::error::every route on this surface renders for everybody"; exit 1; }
-          echo "ok: no session, no bearer, no gate"
+
+          # 2. One file holds the credential. Nothing else in the bundle has heard of one.
+          for f in $(find src -name '*.ts' -o -name '*.tsx'); do
+            [ "$f" = "src/lib/session.ts" ] && continue
+            if strip "$f" | grep -nE 'Authorization|Bearer|localStorage|document\.cookie' | sed "s|^|$f:|" | grep .; then fail=1; fi
+          done
+          [ "$fail" = 0 ] || { echo "::error::the session lives in src/lib/session.ts and nowhere else"; exit 1; }
+          strip src/lib/session.ts | grep -q 'Bearer' || { echo "::error::src/lib/session.ts holds no bearer; this check reads it by name"; exit 1; }
+
+          # 3. The half that could cost something: no credential travels to a chain node, and the
+          #    session module names identity and never the chain.
+          if strip src/lib/rpc.ts | grep -niE 'authorization|bearer|accessToken|session' | grep .; then
+            echo "::error::src/lib/rpc.ts names a credential; a bearer never travels to a chain node"
+            exit 1
+          fi
+          if strip src/lib/session.ts | grep -nE 'rpcUrl|eth_call|rpc\.ts' | grep .; then
+            echo "::error::src/lib/session.ts names the chain; it may name identity and nothing else"
+            exit 1
+          fi
+
+          # 4. The router itself. A route that branches on the session is a gate by another name.
+          routes=$(strip src/app.tsx | perl -0ne 'print $1 if m{(<Routes>.*?</Routes>)}s')
+          [ -n "$routes" ] || { echo "::error::the <Routes> block has moved; this check reads it by name"; exit 1; }
+          if printf '%s\n' "$routes" | grep -nE 'signedIn|account|useSession|loader=' | grep .; then
+            echo "::error::a route in src/app.tsx branches on the session"
+            exit 1
+          fi
+          echo "ok: a session exists, in one file, off the chain, gating nothing"
 
       - name: The route table, the router and nginx agree
         run: test -f test/routes.test.ts && grep -q 'nginx.conf' test/routes.test.ts
