@@ -6,13 +6,21 @@
  * page titles derive from), the `<Route>` elements below, and the enumerated `location` blocks in
  * nginx.conf (which is what makes an unknown address a 404 rather than a 200 with a blank page).
  *
- * ── Nothing here is gated, and there is nothing to gate it with ────────────────────────────────
+ * ── THERE IS AN `AuthProvider` AND THERE IS NO GUARD, WHICH IS NOT A CONTRADICTION ────────────
  *
- * There is no `AuthProvider` in this repository and no route guard, because there is no service to
- * hold a session with. Every page here is a read of a public chain, and the only credential that
- * means anything on this surface is a private key in the reader's own wallet — which never leaves
- * it, and which this bundle only ever asks to SIGN, never to hand over. A sign-in on this surface
- * would be a gate in front of facts that are public by construction.
+ * This block used to say there was neither. The provider arrived on 2026-08-16 with the shared bar
+ * (`components/shell.tsx` carries the argument), and the second half of the old sentence is not
+ * softened by it: **not one `<Route>` below is gated, and none may be.** Every page here is a read
+ * of a public chain, and the only credential that means anything on this surface is a private key
+ * in the reader's own wallet — which never leaves it, and which this bundle only ever asks to SIGN,
+ * never to hand over. A sign-in gate on this surface would be a wall in front of facts that are
+ * public by construction.
+ *
+ * So the provider's entire consumer is the chrome: a handle in the bar, and the `adminOnly` entries
+ * the switcher shows an operator. It wraps INSIDE `ChainProvider` and OUTSIDE the router, because
+ * the shell is a layout route and reads it, and because a context read above its own provider
+ * silently returns the default — here `useSession` throws instead, so the ordering fails loudly
+ * rather than rendering an anonymous bar to a signed-in reader.
  *
  * ── `ChainProvider` WRAPS THE ROUTER, AND THAT ORDER IS LOAD-BEARING ──────────────────────────
  *
@@ -32,6 +40,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { ScrollToTop } from './components/scroll-to-top.tsx'
 import { AppShell } from './components/shell.tsx'
+import { AuthProvider } from './lib/auth.tsx'
 import { ChainProvider } from './lib/chain.tsx'
 import { ContractsPage } from './pages/contracts.tsx'
 import { NotFoundPage } from './pages/not-found.tsx'
@@ -45,29 +54,31 @@ export function App() {
     <BrowserRouter>
       <ScrollToTop />
       <ChainProvider>
-        <Routes>
-          <Route element={<AppShell />}>
-            {/* The one page a stranger needs: one trade, against one pool. */}
-            <Route index element={<SwapPage />} />
-            {/*
-              Two entries under one path, deliberately. `/pools` is every market the factory has
-              made, which is the page that answers "is there a market for X" — a question the swap
-              form cannot answer, because a form that has already been given two tokens is the
-              wrong place to find out which two exist. `/pools/:pair` is one market's own address,
-              which is what gets pasted into a conversation.
-            */}
-            <Route path="pools" element={<PoolsPage />} />
-            <Route path="pools/:pair" element={<PoolPage />} />
-            {/* The receipts are their own address, not a section of `/contracts`: that page proves
-                nobody can take your coins, and a receipt is the case where somebody already has
-                them. They also have to be linkable per network from the main site. */}
-            <Route path="receipts" element={<ReceiptsPage />} />
-            <Route path="contracts" element={<ContractsPage />} />
-            {/* Unknown paths render inside the shell, so the reader keeps the navigation they need
-                to get back out — under a real 404, which nginx.conf preserves. */}
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route element={<AppShell />}>
+              {/* The one page a stranger needs: one trade, against one pool. */}
+              <Route index element={<SwapPage />} />
+              {/*
+                Two entries under one path, deliberately. `/pools` is every market the factory has
+                made, which is the page that answers "is there a market for X" — a question the swap
+                form cannot answer, because a form that has already been given two tokens is the
+                wrong place to find out which two exist. `/pools/:pair` is one market's own address,
+                which is what gets pasted into a conversation.
+              */}
+              <Route path="pools" element={<PoolsPage />} />
+              <Route path="pools/:pair" element={<PoolPage />} />
+              {/* The receipts are their own address, not a section of `/contracts`: that page proves
+                  nobody can take your coins, and a receipt is the case where somebody already has
+                  them. They also have to be linkable per network from the main site. */}
+              <Route path="receipts" element={<ReceiptsPage />} />
+              <Route path="contracts" element={<ContractsPage />} />
+              {/* Unknown paths render inside the shell, so the reader keeps the navigation they need
+                  to get back out — under a real 404, which nginx.conf preserves. */}
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
       </ChainProvider>
     </BrowserRouter>
   )

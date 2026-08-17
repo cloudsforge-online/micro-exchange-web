@@ -20,8 +20,8 @@ import { cloudsforgeHosts, type CloudsForgeHosts, type SurfaceKey } from '@cloud
 /**
  * The surface this application IS.
  *
- * `exchange`, registered as a `service` with `inSwitcher: false`, subdomain `exchange`, accent
- * `#b28e1e` and glyph `⇄`. **`markId: null`**, which is a decision rather than a gap and the same
+ * `exchange`, registered as a `service` with **`inSwitcher: true`**, subdomain `exchange`, accent
+ * `#dcde5e` and glyph `⇄`. **`markId: null`**, which is a decision rather than a gap and the same
  * one `explorer` and `pool` carry: the exchange is chain infrastructure and belongs to Forge
  * Network rather than being a product with a mark of its own. Nothing in this bundle renders a mark
  * and `test/brand-chrome.test.ts` asserts there is none to render.
@@ -32,12 +32,21 @@ import { cloudsforgeHosts, type CloudsForgeHosts, type SurfaceKey } from '@cloud
  * that answers for `exchange` on a developer's machine. It was 4150 while the row was a placeholder
  * for a plan, which was a reservation in the service block that nothing has ever bound.
  *
- * `kind: 'service'` rather than `'product'` matters mechanically and not only editorially. The
- * accent guard in `surfaces.test.ts` holds PRODUCTS to a strict bijection with `PRODUCT_ACCENTS`,
- * so a seventh product would mean choosing a seventh accent by the documented CIEDE2000 procedure
- * — design work the registry row itself argues belongs to a later decision, not to the phase that
- * ships the frontend. The gold is shared with `create` and `pool`, which `tokens.css` already
- * declares a block for.
+ * ── 2026-08-16: TWO OF THE THREE FACTS ABOVE CHANGED, AND THIS IS WHAT THEY WERE ─────────────
+ *
+ * This block said `inSwitcher: false` and accent `#b28e1e`, "the gold shared with `create` and
+ * `pool`". Both were true and both are now wrong, on one report: "forge exchange is not available
+ * in the product menu". The registry row moved to the end of the customer-facing run, `inSwitcher`
+ * flipped, and the distinct-accent guard in `surfaces.test.ts` then DEMANDED a hue of its own —
+ * which is exactly the trigger the old `tokens.css` comment predicted it would be. #dcde5e came out
+ * of `ui/scripts/find_exchange_accent.mjs`, scored on separation from the two rows it touches.
+ *
+ * `kind: 'service'` rather than `'product'` still stands, and it is now doing MORE work rather than
+ * less: the accent guard holds PRODUCTS to a strict bijection with `PRODUCT_ACCENTS`, and the
+ * dE 30 adjacency gate iterates products only — so a `service` may be a switcher entry wearing a
+ * hue that is not in the product set, which is what `explorer` and `nimbus` already do. A seventh
+ * PRODUCT accent is a different and harder question, and `surfaces.ts` records that it has been
+ * asked twice and answered no twice.
  */
 export const PRODUCT: SurfaceKey = 'exchange'
 
@@ -47,12 +56,16 @@ export const APP_NAME = 'exchange-web'
 /**
  * The accent block this page's `<html>` names.
  *
- * `exchange` is a real selector in `ui/packages/ui/src/tokens.css` — it shares the gold block with
- * `create` and `pool`, and has since the row was added. Naming a product with no block would fall
- * through to the company ember in complete silence, which is the exact failure tokens.css calls out
- * and the one `admin` had and `explorer` still has. `test/brand-chrome.test.ts` asserts the
- * selector this page names really exists upstream, which is the check that catches a fall-through
- * either way.
+ * `exchange` is a real selector in `ui/packages/ui/src/tokens.css` and has its OWN block as of
+ * 2026-08-16, first among the non-product surfaces because it is first among them in the switcher.
+ * It shared the gold block with `create` and `pool` until then, under a comment stating the
+ * condition on which it would leave — becoming a switcher entry — which is what happened.
+ *
+ * Naming a product with no block would fall through to the company ember in complete silence, which
+ * is the exact failure tokens.css calls out and the one `admin` had and `explorer` still has.
+ * `test/brand-chrome.test.ts` asserts the selector this page names really exists upstream, which is
+ * the check that catches a fall-through either way — and it is the check that would have caught the
+ * split above going wrong.
  */
 export const ACCENT_SURFACE = 'exchange'
 

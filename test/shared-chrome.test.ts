@@ -1,26 +1,32 @@
 /**
- * What this shell takes from the design system, and the one thing it deliberately does not.
+ * What this shell takes from the design system, and what the one thing it used to withhold cost.
  *
  * ════════════════════════════════════════════════════════════════════════════════════════════════
- * ONE ABSENCE, AND IT IS PINNED TO A PRODUCT ARGUMENT RATHER THAN TO A GAP.
+ * THIS FILE USED TO PIN AN ABSENCE. IT NOW PINS A MOUNT, AND THE HISTORY IS THE POINT.
  *
- * `CloudsForgeBar` is out. The distinction this file exists to hold is between an absence caused by
- * something MISSING — which the day it lands should turn into a mount, and until then is a debt —
- * and an absence that is a decision, which no amount of upstream work should reverse. This one is
- * the second kind, and the registry is not the reason: `surface('exchange')` resolves, which is how
- * `CloudsForgeFooter` is mounted below and how its three legal links compose against micro-site.
+ * Until 2026-08-16 the assertion below was `!imported().includes('CloudsForgeBar')`, defended by a
+ * long argument: the bar always renders an account control; there is no `micro-exchange`; every
+ * number comes off a public JSON-RPC endpoint; and the identity that decides what a reader can do
+ * is an address in their own wallet that CloudsForge did not issue and cannot revoke. Every one of
+ * those premises is still true and none of them has been deleted from the shell.
  *
- * The bar always renders an account control, and `AccountMenu` shows "Sign in" whenever the reader
- * is not signed in. On this surface there is nothing behind that button: there is no
- * `micro-exchange`, every number comes off a public JSON-RPC endpoint, and the identity that decides
- * what a reader can do is an address in their own wallet that CloudsForge did not issue and cannot
- * revoke. So the test below pins THAT reason, in the shell where a reader will actually meet it, and
- * checks it is still true — an absence defended by a claim that has quietly stopped holding is an
- * absence nobody can defend.
+ * The conclusion was wrong, and the owner found it the way a reader would:
  *
- * What the absence must NOT take with it is the network switcher. The bar is what normally carries
- * it, and losing it here would leave this the one surface in the estate that cannot be read on the
- * other network at all. It is mounted directly, and that is asserted too.
+ *   "i tried url directly its open but it has no login bar on top"
+ *
+ * The mistake was treating the bar as an authorisation mechanism. It is the estate's CHROME — the
+ * product switcher, the network switcher, the CloudsForge home link, the handle of whoever is
+ * signed in. A page that drops it does not read as "no account needed", it reads as a page that
+ * fell off the estate, which is the worst impression the one money-handling surface can make.
+ *
+ * So the tests below hold three things, and the third is what stops this being a reversal of the
+ * old argument rather than a correction of it:
+ *
+ *   1. the bar IS mounted, with the account and the network switch wired to real state;
+ *   2. the network switcher still works IN PLACE — the reason it was mounted by hand was that the
+ *      bar was absent, and handing it back to the bar must not turn it into a teleport;
+ *   3. NOTHING IS GATED. The premises that kept the bar out were always premises about gating, and
+ *      they survive intact: no route, no read and no panel on this surface consults a session.
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
 import assert from 'node:assert/strict'
@@ -45,10 +51,19 @@ test('the shell takes the shared chrome', () => {
   // `CookieBanner` is the only place the analytics tag is ever injected, which is what keeps a
   // cookie from being set before consent — and on this surface the path being reported would name
   // a mining address.
-  for (const name of ['SkipLink', 'MainRegion', 'CookieBanner', 'CloudsForgeLogo']) {
+  //
+  // `CloudsForgeLogo` is NOT in this list any more, and its removal is not a regression: the bar
+  // renders the logo itself, linked to the marketing site. The shell used to draw one by hand
+  // because there was no bar to draw it, and two CloudsForge home links in one header is not a
+  // smaller defect than none.
+  for (const name of ['SkipLink', 'MainRegion', 'CookieBanner']) {
     assert.ok(imported().includes(name), `src/components/shell.tsx does not use ${name}`)
     assert.ok(SHELL.includes(`<${name}`), `${name} is imported and never mounted`)
   }
+  assert.ok(
+    !SHELL.includes('<CloudsForgeLogo'),
+    'the shell draws its own logo beside the bar’s, which is two home links in one header',
+  )
 })
 
 test('THE SHARED FOOTER IS MOUNTED, AND THERE IS NO LOCAL ONE LEFT BESIDE IT', () => {
@@ -86,55 +101,91 @@ test('THE FOOTER’S LEGAL LINKS ARE MICRO-SITE ROUTES THAT REALLY EXIST', (t) =
   }
 })
 
-test('THE BAR IS OUT ON PRODUCT GROUNDS, AND THE SHELL STATES THEM WITHOUT CITING THE REGISTRY', () => {
+test('THE ESTATE’S BAR IS MOUNTED, WITH A REAL ACCOUNT BEHIND IT', () => {
   assert.ok(
-    !imported().includes('CloudsForgeBar'),
-    'src/components/shell.tsx mounts CloudsForgeBar. The registry row is not the question — it ' +
-      'landed and the footer went in on the strength of it. The bar always renders an account ' +
-      'control, and this surface calls no CloudsForge service at all: every number on it comes ' +
-      'from a public JSON-RPC endpoint over eth_call, and the identity that decides what a reader ' +
-      'can do here is an address in their own wallet. A "Sign in" beside the Connect button reads ' +
-      'as an alternative to it. It is not one — only one of the two can sign a swap.',
+    imported().includes('CloudsForgeBar'),
+    'src/components/shell.tsx does not mount CloudsForgeBar. This surface shipped without it once ' +
+      'and the owner reported it: "it has no login bar on top". The bar is the estate’s chrome — ' +
+      'the product switcher, the network switcher, the home link and the reader’s handle — not an ' +
+      'authorisation mechanism, so "nothing here needs an account" is not a reason to drop it.',
   )
+  assert.match(SHELL, /<CloudsForgeBar[\s\S]*?current=\{PRODUCT\}/)
 
-  // The reason has to survive in the file, not only in this test — a reader deciding whether to
-  // mount the bar reads the shell, and the argument is the whole of what stops them. Each of these
-  // claims is checkable against this repository rather than being a taste: there is no
-  // `micro-exchange` to hold a session, and `lib/hosts.ts` has no `apiBase()` to send one to.
-  const header = SHELL_RAW.slice(0, SHELL_RAW.indexOf('import '))
-  assert.match(header, /CloudsForgeBar/)
-  assert.match(header, /no CloudsForge service/i)
-  assert.match(header, /category error/i)
-  assert.match(header, /wallet/i)
-  // And the claim is TRUE, not merely written down. The bar's absence rests on this surface having
-  // no service behind it; a `apiBase()` appearing in hosts.ts is the day the argument stops holding
-  // and the day this test should go red, rather than the day somebody notices in review.
+  // A bar wired to a literal is a bar that renders a signed-out control to a signed-in reader
+  // forever, which is indistinguishable from the defect this change fixed. The account comes from
+  // the provider, and both handlers are passed: `onSignIn` alone leaves an operator unable to leave.
+  assert.match(SHELL, /account=\{account\}/)
+  assert.match(SHELL, /onSignIn=/)
+  assert.match(SHELL, /onSignOut=/)
+  assert.match(SHELL, /useSession\(\)/)
+
+  // And the footer sees the same reader. It filters `adminOnly` surfaces on `account.roles`, so a
+  // footer given nothing hides the operator tools from the operator the bar above it is greeting
+  // by name — which is the drift a shared component exists to prevent.
+  assert.match(SHELL, /<CloudsForgeFooter[\s\S]*?account=\{account\}/)
+})
+
+test('THE SURFACE IS IN THE PRODUCT MENU, WHICH IS A REGISTRY FACT AND NOT A LOCAL ONE', () => {
+  // The bar renders the switcher from `SWITCHER_SURFACES`, so mounting it is only half the owner's
+  // report. A row with `inSwitcher: false` produces a bar with no entry for the surface you are
+  // standing on — which is exactly what "forge exchange is not available in the product menu"
+  // described, and it is fixed upstream rather than here.
+  const here = surface('exchange')
+  assert.equal(here.subdomain, 'exchange')
+  assert.equal(here.inSwitcher, true, 'the registry row is out of the switcher again')
+  // Its own hue, not a borrowed one: the distinct-accent guard over SWITCHER_SURFACES is what
+  // demanded it the moment the row went in, and `tokens.css` has a matching block.
+  assert.equal(here.accent, '#dcde5e')
+})
+
+test('THE PREMISES THAT KEPT THE BAR OUT ARE STILL TRUE, AND STILL GATE NOTHING', () => {
+  // The old argument was not wrong about the estate, it was wrong about menus. Its factual claims
+  // are load-bearing in a different place now — they are why nothing on this surface is gated — so
+  // they are checked here rather than deleted with the assertion they used to support.
+  //
+  // There is no `micro-exchange` and no service base to send a bearer to. If one ever appears, this
+  // goes red on the day it does rather than on the day somebody notices in review.
   assert.doesNotMatch(
     stripComments(read('src/lib/hosts.ts'), 'ts'),
     /apiBase/,
-    'src/lib/hosts.ts has grown an apiBase(). The shell keeps CloudsForgeBar out on the grounds ' +
-      'that this surface calls no CloudsForge service; that ground has just moved.',
+    'src/lib/hosts.ts has grown an apiBase(). Every number on this surface is supposed to come ' +
+      'from a chain node, and a service base is how a session quietly becomes load-bearing.',
   )
-  // And the argument must not be borrowed from the console it was written for. micro-pool's version
-  // of this absence turned on a bearer token and a mining address, neither of which exists here; a
-  // reason a reader can disprove in ten seconds gets the decision reversed for the wrong cause.
-  assert.ok(surface('exchange').subdomain === 'exchange')
+  // A BEARER MUST NEVER TRAVEL TO A CHAIN NODE. `lib/rpc.ts` composes the JSON-RPC address and
+  // issues every eth_call; a public endpoint would ignore an authorization header, but sending one
+  // would put a CloudsForge access token in the logs of something that is public by construction.
+  const rpc = stripComments(read('src/lib/rpc.ts'), 'ts')
+  assert.doesNotMatch(rpc, /authorization|Bearer|accessToken/i, 'lib/rpc.ts has grown a credential')
+  assert.doesNotMatch(rpc, /session\.ts|auth\.tsx/, 'lib/rpc.ts imports the session')
+
+  // The shell still states the wallet-versus-account distinction, because that is the confusion the
+  // bar's account control can cause and the reader meets it in the shell rather than in this file.
+  const header = SHELL_RAW.slice(0, SHELL_RAW.indexOf('import '))
+  assert.match(header, /CloudsForgeBar/)
+  assert.match(header, /no CloudsForge service/i)
+  assert.match(header, /wallet/i)
+  // And the reasoning must not be borrowed from the console it was first written for. micro-pool's
+  // version of this argument turned on a bearer token and a mining address, neither of which exists
+  // here; a reason a reader can disprove in ten seconds gets the decision reversed for a bad cause.
   assert.doesNotMatch(
     header,
     /mining address|micro-pool/,
-    'the shell argues the bar out on micro-pool’s grounds; this surface has neither',
+    'the shell argues about the bar on micro-pool’s grounds; this surface has neither',
   )
 })
 
-test('THE BAR BEING OUT DOES NOT TAKE THE NETWORK SWITCHER WITH IT', () => {
-  // The claims that keep `CloudsForgeBar` out are all claims about the ACCOUNT CONTROL it renders.
-  // None of them reaches `NetworkSwitcher`, which asks for no session and renders no account — but
-  // the bar is what normally carries it, so dropping the bar without mounting the switcher directly
-  // would leave this one surface unable to be read on the other network at all (micro-org#459).
-  // Without this test the next reader tidying the shell reads "the shared chrome is out on product
-  // grounds" and takes the switcher out with it.
-  assert.ok(imported().includes('NetworkSwitcher'), 'the shell does not mount the network switcher')
-  assert.ok(SHELL.includes('<NetworkSwitcher'))
+test('THE NETWORK SWITCH STILL VIEWS IN PLACE, NOW THAT THE BAR CARRIES IT', () => {
+  // The switcher was mounted by hand ONLY because the bar was absent (micro-org#459). Handing it
+  // back must not turn it into a teleport to a second deployment: `onSelect` is what makes the bar
+  // re-point this page's reads instead of navigating, and without it the bar falls back to an
+  // `elsewhere` link. Nothing in this repository would notice the difference except this test.
+  assert.match(SHELL, /networkSwitch=\{\{/)
+  assert.match(SHELL, /selected: viewed/)
+  assert.match(SHELL, /onSelect: \(n\) =>/)
+  assert.ok(
+    !SHELL.includes('<NetworkSwitcher'),
+    'the shell mounts a second network switcher beside the bar’s',
+  )
 
   // And the choice actually re-points the reads. `viewedNetwork` is what `lib/rpc.ts` composes the
   // endpoint from, and the `key` on the outlet is what makes the tree read again — a switcher that
@@ -143,9 +194,14 @@ test('THE BAR BEING OUT DOES NOT TAKE THE NETWORK SWITCHER WITH IT', () => {
   assert.match(SHELL, /setViewedNetwork\(/)
   assert.match(SHELL, /<Outlet key=\{viewed\}/)
 
-  // The amber band follows the SELECTED network, not the hostname it was served from. Mainnet
-  // chrome over testnet numbers is the failure this whole arrangement exists to prevent.
-  assert.match(SHELL, /<TestnetBand network=\{viewed\}/)
+  // The amber band comes from the bar now and follows the SELECTED network, not the hostname it was
+  // served from. Mainnet chrome over testnet numbers is the failure this arrangement exists to
+  // prevent, and the bar reads `networkSwitch.selected` to render it — which the assertions above
+  // are what keep pointed at the same state.
+  assert.ok(
+    !SHELL.includes('<TestnetBand'),
+    'the shell mounts a second testnet band beside the bar’s',
+  )
 })
 
 test('every estate link in the shell is composed by the REGISTRY, through this repository’s wrapper', () => {

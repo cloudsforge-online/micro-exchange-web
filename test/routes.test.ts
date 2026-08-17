@@ -141,17 +141,51 @@ test('the sitemap lists the routes a crawler should have, and NOT one pair’s a
   assert.doesNotMatch(sitemap, /0x[0-9a-fA-F]{40}/)
 })
 
-test('NOTHING ON THIS SURFACE IS GATED, AND THERE IS NOTHING TO GATE IT WITH', () => {
-  // There is no CloudsForge service behind this bundle at all: every read is an anonymous
-  // `eth_call` against a public chain and every write is signed by the reader's own wallet. A
-  // guard here would put a login in front of facts that are public by construction, and would
-  // imply an account this surface deliberately does not have. Asserted as an absence, because the
-  // reflex is to add one back — and comments are stripped first because src/app.tsx NAMES what it
-  // refuses in order to explain it.
-  for (const forbidden of ['ProtectedRoute', 'RequireAuth', 'AuthProvider', 'useSession']) {
+test('NOTHING ON THIS SURFACE IS GATED, THOUGH SOMETHING IS FINALLY SIGNED IN', () => {
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // This test used to forbid `AuthProvider` and `useSession` alongside the guards, on the ground
+  // that there was no account here at all. Half of that expired on 2026-08-16: the shared bar
+  // arrived (the owner: "it has no login bar on top"), and the bar greets a reader by name, so a
+  // provider exists and the shell reads it. `src/app.tsx` carries the argument.
+  //
+  // The other half did not expire and is what this test is now for. Every read on this surface is
+  // an anonymous `eth_call` against a public chain and every write is signed by the reader's own
+  // wallet. A GUARD would put a login in front of facts that are public by construction — so the
+  // provider may be READ and may gate NOTHING, and the difference between those two is the whole
+  // assertion. Comments are stripped first, because src/app.tsx names what it refuses in order to
+  // explain it.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  for (const forbidden of ['ProtectedRoute', 'RequireAuth', 'RequireSession', 'redirectToLogin']) {
     assert.ok(
       !app.includes(forbidden),
       `src/app.tsx references ${forbidden}; every route on this surface renders for everybody`,
+    )
+  }
+
+  // The provider IS here, and asserted positively rather than left as a hole in the list above: a
+  // bar with no session behind it renders every reader as a stranger, which is the defect this
+  // whole change was reported for.
+  assert.match(app, /<AuthProvider>/)
+
+  // ...and it wraps INSIDE ChainProvider, which is the ordering `src/app.tsx` argues for: the
+  // question "which chain is this" is answered before the question "who is reading", because the
+  // first one decides whether the page has anything to show and the second one only decides whose
+  // handle is in the corner.
+  assert.ok(
+    app.indexOf('<ChainProvider>') < app.indexOf('<AuthProvider>'),
+    'AuthProvider is outside ChainProvider; the chain has to resolve before the chrome',
+  )
+
+  // Not one `<Route>` may name a guard, an `element` that is not a page, or a `loader` that could
+  // refuse. Read as text off the route block itself rather than off the whole file, so a provider
+  // above it cannot satisfy or break this.
+  const routeBlock = app.slice(app.indexOf('<Routes>'), app.indexOf('</Routes>'))
+  assert.ok(routeBlock.length > 0, 'the <Routes> block has moved; this check reads it by name')
+  for (const forbidden of [/signedIn/, /account/, /useSession/, /loader=/]) {
+    assert.doesNotMatch(
+      routeBlock,
+      forbidden,
+      'a route in src/app.tsx branches on the session; every page here is a read of a public chain',
     )
   }
 })
