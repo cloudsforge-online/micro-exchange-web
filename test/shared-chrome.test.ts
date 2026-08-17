@@ -135,7 +135,7 @@ test('THE SURFACE IS IN THE PRODUCT MENU, WHICH IS A REGISTRY FACT AND NOT A LOC
   assert.equal(here.inSwitcher, true, 'the registry row is out of the switcher again')
   // Its own hue, not a borrowed one: the distinct-accent guard over SWITCHER_SURFACES is what
   // demanded it the moment the row went in, and `tokens.css` has a matching block.
-  assert.equal(here.accent, '#dcde5e')
+  assert.equal(here.accent, '#d05870')
 })
 
 test('THE PREMISES THAT KEPT THE BAR OUT ARE STILL TRUE, AND STILL GATE NOTHING', () => {

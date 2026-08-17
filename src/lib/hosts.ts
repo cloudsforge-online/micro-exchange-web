@@ -21,7 +21,7 @@ import { cloudsforgeHosts, type CloudsForgeHosts, type SurfaceKey } from '@cloud
  * The surface this application IS.
  *
  * `exchange`, registered as a `service` with **`inSwitcher: true`**, subdomain `exchange`, accent
- * `#dcde5e` and glyph `⇄`. **`markId: null`**, which is a decision rather than a gap and the same
+ * `#d05870` and glyph `⇄`. **`markId: null`**, which is a decision rather than a gap and the same
  * one `explorer` and `pool` carry: the exchange is chain infrastructure and belongs to Forge
  * Network rather than being a product with a mark of its own. Nothing in this bundle renders a mark
  * and `test/brand-chrome.test.ts` asserts there is none to render.
@@ -38,8 +38,10 @@ import { cloudsforgeHosts, type CloudsForgeHosts, type SurfaceKey } from '@cloud
  * `pool`". Both were true and both are now wrong, on one report: "forge exchange is not available
  * in the product menu". The registry row moved to the end of the customer-facing run, `inSwitcher`
  * flipped, and the distinct-accent guard in `surfaces.test.ts` then DEMANDED a hue of its own —
- * which is exactly the trigger the old `tokens.css` comment predicted it would be. #dcde5e came out
- * of `ui/scripts/find_exchange_accent.mjs`, scored on separation from the two rows it touches.
+ * which is exactly the trigger the old `tokens.css` comment predicted it would be. #d05870 came out
+ * of `ui/scripts/find_exchange_accent.mjs`, scored on separation from the two rows it touches AND on
+ * legibility as type — the second gate added after the sweep's first answer, a lime, cleared every
+ * distance test and then failed axe on micro-site's light-mode `/products/exchange`.
  *
  * `kind: 'service'` rather than `'product'` still stands, and it is now doing MORE work rather than
  * less: the accent guard holds PRODUCTS to a strict bijection with `PRODUCT_ACCENTS`, and the
