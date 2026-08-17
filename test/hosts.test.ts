@@ -90,11 +90,12 @@ test('THE REGISTRY SAYS THIS SURFACE SERVES A PAGE, WHICH IS WHAT MADE THIS REPO
   //   "forge exchange is not available in the product menu"
   //
   // Flipping this DEMANDED an accent of its own, because `surfaces.test.ts` holds every switcher
-  // entry to a distinct hue — #dcde5e, from `ui/scripts/find_exchange_accent.mjs`. The row sits
+  // entry to a distinct hue — #d05870, from `ui/scripts/find_exchange_accent.mjs`. The row sits
   // last in the customer-facing run, and `test/shared-chrome.test.ts` holds the pair from the
-  // frontend's side.
+  // frontend's side. It is the sweep's SECOND answer: the first, a lime, cleared every separation
+  // gate and then failed axe on micro-site, which sets type in the raw accent.
   assert.equal(exchange.inSwitcher, true)
-  assert.equal(exchange.accent, '#dcde5e')
+  assert.equal(exchange.accent, '#d05870')
 
   // No mark of its own, which is why public/ borrows CloudsForge's chrome. See brand-chrome.test.
   assert.equal(exchange.markId, null)
