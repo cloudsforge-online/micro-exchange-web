@@ -257,8 +257,8 @@ function NewPoolForm({ deployment }: { readonly deployment: Deployment }) {
             <div className="xc-facts__row">
               <dt>Who may do it</dt>
               <dd>
-                Anybody. There is no allowlist, no fee and no owner check on this call — verified
-                against the deployed factory on both Hearth chains, not assumed from the source.
+                Anybody. The factory charges no fee for this and keeps no allowlist, on both Hearth
+                chains.
               </dd>
             </div>
             <div className="xc-facts__row">

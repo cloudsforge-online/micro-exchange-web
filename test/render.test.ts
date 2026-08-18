@@ -892,8 +892,8 @@ describe('creating a market', () => {
         // transaction is sent, which is what makes the link to the deposit page honest.
         const derived = pairFor(HEARTH, NEFELI.address, SILT.address)
         assert.match(screen.text(), new RegExp(derived.slice(2, 12), 'i'))
-        assert.match(screen.text(), /Anybody\. There is no allowlist, no fee and no owner check/)
-        assert.match(screen.text(), /verified against the deployed factory on both Hearth chains/)
+        assert.match(screen.text(), /Anybody\. The factory charges no fee for this/)
+        assert.match(screen.text(), /keeps no allowlist, on both Hearth chains/)
         // And what it would hold, which is the part somebody about to spend gas has to hear.
         assert.match(screen.text(), /Nothing\. A new pair has no reserves/)
 
