@@ -40,6 +40,27 @@ export function formatUnits(value: bigint, decimals: number, precision = 6): str
 }
 
 /**
+ * The same number, in the shape `parseUnits` will take back.
+ *
+ * SEPARATE FROM `formatUnits` BECAUSE OF THE THOUSANDS SEPARATORS. `formatUnits` groups digits,
+ * which is right on screen and fatal in an input: a balance of 1,234.5 written into an amount field
+ * comes back through `parseUnits` as null, and the form then says "enter an amount" under an amount
+ * the page itself just put there. So anything that FILLS A FIELD — the "you hold" shortcut, the
+ * computed counter-amount on a deposit, the underlying of a withdrawal — comes through here, and
+ * anything a reader only reads goes through `formatUnits`.
+ *
+ * Full precision, trailing zeros trimmed, no grouping. Truncation is not a risk here because
+ * nothing is dropped.
+ */
+export function toDecimalString(value: bigint, decimals: number): string {
+  if (value < 0n) return '0'
+  const digits = value.toString().padStart(decimals + 1, '0')
+  const whole = digits.slice(0, digits.length - decimals)
+  const fraction = decimals <= 0 ? '' : digits.slice(digits.length - decimals).replace(/0+$/, '')
+  return fraction === '' ? whole : `${whole}.${fraction}`
+}
+
+/**
  * A decimal string the reader typed, as an integer in the token's smallest unit.
  *
  * Returns **null** for anything that is not a plain non-negative decimal, including the empty
@@ -233,5 +254,72 @@ export const SWAP_TERMS: readonly { readonly what: string; readonly detail: stri
     detail:
       'A swap is a transaction on a public chain. Once it is mined there is no support desk that ' +
       'can undo it, and CloudsForge has no ability to move anything back.',
+  },
+]
+
+/**
+ * THE SENTENCE FOR AN EMPTY POOL, and the reason this whole flow needed a warning rather than a
+ * hint.
+ *
+ * Supplying to a pool that already has reserves is bounded: the ratio is fixed by the pool, the
+ * router will not let a deposit move it, and the worst ordinary outcome is impermanent loss, which
+ * is gradual and reversible by withdrawing. A FIRST deposit is a different act entirely — there is
+ * no ratio to conform to, so whatever ratio is deposited BECOMES the price, and there is no
+ * mechanism anywhere that puts it back. An arbitrageur simply takes the difference on the first
+ * trade, and it is taken from the depositor.
+ *
+ * This is the one place on the surface where somebody can lose a large fraction of what they put in
+ * through a typo rather than through a market movement, so it is said at the moment of signing and
+ * in the plainest words available.
+ */
+export const FIRST_DEPOSIT_WARNING =
+  'This pool is empty, so the ratio you deposit becomes its price. Nothing corrects it: if that ' +
+  'ratio is not what the two tokens are worth elsewhere, the first person to trade takes the ' +
+  'difference out of your deposit. Check both amounts before you sign.'
+
+/**
+ * What a liquidity provider is agreeing to, in the order it matters.
+ *
+ * Written for the moment BEFORE the gas is spent, which is the whole point of the list: every item
+ * here is a refusal the chain will make, or a cost it will impose, that a reader cannot see from
+ * the form. The protocol-fee item is deliberately not "there is no protocol fee" — the switch is
+ * read live off the factory on the page beside this list, because a claim in prose about a value
+ * that a multisig can change at any moment is a claim that goes stale silently.
+ */
+export const LIQUIDITY_TERMS: readonly { readonly what: string; readonly detail: string }[] = [
+  {
+    what: 'You are buying a share, not a receipt',
+    detail:
+      'The pool mints you an ERC-20 of its own. It is a claim on a proportion of whatever the pool ' +
+      'holds at the moment you withdraw, which is not the two amounts you put in: trading changes ' +
+      'the mix, and a pool whose price has moved returns more of the side that fell.',
+  },
+  {
+    what: 'It costs two transactions per token',
+    detail:
+      'An ERC-20 cannot be moved by a contract that has not been allowed to move it, so each ' +
+      'non-native side needs an approval before the deposit. This page approves exactly the amount ' +
+      'being deposited rather than an unlimited allowance, which costs a signature and leaves ' +
+      'nothing behind.',
+  },
+  {
+    what: 'The router may take less than you typed',
+    detail:
+      'It recomputes the second side from the reserves in the block it executes in, and deposits ' +
+      'the largest consistent pair. Your slippage tolerance is what stops that going further than ' +
+      'you meant: past it the transaction reverts rather than depositing at a ratio you did not ' +
+      'agree to.',
+  },
+  {
+    what: 'The 0.3% fee accrues to the pool, not to you directly',
+    detail:
+      'There is no claim button and nothing to harvest. Fees stay in the reserves, so the same ' +
+      'share is worth more of them over time — you see it when you withdraw.',
+  },
+  {
+    what: 'Nothing here is reversible',
+    detail:
+      'A deposit is a transaction on a public chain. CloudsForge never holds these tokens, cannot ' +
+      'sign for you and cannot move anything back.',
   },
 ]

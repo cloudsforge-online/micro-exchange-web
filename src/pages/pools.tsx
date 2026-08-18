@@ -31,7 +31,13 @@ import { PAIR_PAGE_LIMIT, readAllPairs, type PairView } from '../lib/market.ts'
 import { formatCount, formatPrice, formatUnits, shortAddress } from '../lib/format.ts'
 import { explorerAddressUrl, hosts } from '../lib/hosts.ts'
 import { useResource } from '../lib/resource.ts'
-import { poolPath, swapPath } from '../lib/routes.ts'
+import {
+  addLiquidityPath,
+  NEW_POOL_PATH,
+  poolPath,
+  POSITIONS_PATH,
+  swapPath,
+} from '../lib/routes.ts'
 import type { Deployment } from '../lib/dex.ts'
 
 export function PoolsPage() {
@@ -67,15 +73,29 @@ function PoolList({ deployment }: { readonly deployment: Deployment }) {
           them. Each one is a contract holding two tokens; the ratio between them is the price, and
           nothing else sets it.
         </p>
+        {/*
+          The write half of this surface hangs off here rather than off the top navigation. Both are
+          children of `/pools` — a reader looking for their own liquidity is looking at the market
+          list, not at a separate product — and `lib/routes.ts` argues why the route table did not
+          grow a fifth entry for them.
+        */}
+        <p className="xc-panel__actions">
+          <Link className="cf-btn" to={POSITIONS_PATH}>
+            Your liquidity
+          </Link>
+          <Link className="cf-btn" to={NEW_POOL_PATH}>
+            Create a market
+          </Link>
+        </p>
       </header>
 
       {pairs.length === 0 ? (
         <Empty
           title="The factory has not created a market yet"
-          hint="Nothing is wrong. A pool exists the moment somebody creates one and puts two tokens in it — this page lists them as they appear."
+          hint="Nothing is wrong. A pool exists the moment somebody creates one and puts two tokens in it — and anybody may be that somebody: the factory takes no owner and checks no caller."
           action={
-            <Link className="cf-btn" to="/contracts">
-              See the contracts
+            <Link className="cf-btn cf-btn--ember" to={NEW_POOL_PATH}>
+              Create a market
             </Link>
           }
         />
@@ -185,9 +205,12 @@ function PoolRow({
           {shortAddress(pair.address)}
         </a>
       </td>
-      <td>
+      <td className="xc-table__actions">
         <Link className="cf-btn" to={swapPath(pair.token0.address, pair.token1.address)}>
           Swap
+        </Link>{' '}
+        <Link className="cf-btn" to={addLiquidityPath(pair.address)}>
+          Supply
         </Link>
       </td>
     </tr>

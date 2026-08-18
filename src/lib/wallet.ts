@@ -94,6 +94,45 @@ export function toQuantity(wei: bigint): string {
 export const DEADLINE_SECONDS = 20 * 60
 
 /**
+ * The deadlines a reader may choose from on the liquidity pages, in minutes.
+ *
+ * THREE, AND NO FREE-TEXT FIELD, for the reason `swap.tsx` gives about the tolerance: a box invites
+ * a number nobody meant. Ten minutes is short enough to be a real protection on a chain with
+ * five-second blocks and long enough to survive a wallet the reader walked away from; an hour is
+ * the outer end of what is still a deadline rather than a formality. The default is the middle one
+ * and equals `DEADLINE_SECONDS`, so the swap form and the liquidity forms agree without one of them
+ * having to import the other's list.
+ */
+export const DEADLINE_CHOICES: readonly { readonly minutes: number; readonly label: string }[] = [
+  { minutes: 10, label: '10 minutes' },
+  { minutes: 20, label: '20 minutes' },
+  { minutes: 60, label: '1 hour' },
+]
+
+/**
+ * The absolute ceiling on a deadline this bundle will encode, whatever it is asked for.
+ *
+ * A day. The argument exists to stop a transaction executing against a price nobody would accept
+ * after sitting in a mempool, and a deadline measured in weeks — or the `type(uint256).max` that
+ * several well-known frontends send — has thrown that protection away while still passing the
+ * router's `require`. This is a guard on the BUILDER rather than on the form, so a future page that
+ * forgets to validate its own input cannot get past it.
+ */
+export const MAX_DEADLINE_SECONDS = 24 * 60 * 60
+
+/** `now + window`, as the `uint256` every V2 entry point takes. Throws on a window it will not send. */
+function deadlineAt(nowSeconds: number, windowSeconds: number): bigint {
+  if (!Number.isFinite(nowSeconds) || nowSeconds < 0) throw new WalletError('the clock is not a time')
+  if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+    throw new WalletError('a deadline must be in the future')
+  }
+  if (windowSeconds > MAX_DEADLINE_SECONDS) {
+    throw new WalletError('a deadline that far out is not a deadline')
+  }
+  return BigInt(Math.floor(nowSeconds) + Math.floor(windowSeconds))
+}
+
+/**
  * The swap transaction.
  *
  * ── THREE SHAPES, BECAUSE THE NATIVE COIN IS NOT A TOKEN ─────────────────────────────────────
@@ -189,6 +228,213 @@ export function buildApproveTransaction(opts: {
     data: encodeCall(SIG.approve, [
       { type: 'address', value: spender },
       { type: 'uint', value: amount },
+    ]),
+    value: '0x0',
+  }
+}
+
+/**
+ * The deposit.
+ *
+ * ── FOUR NUMBERS, AND ONLY TWO OF THEM ARE ENFORCEABLE ───────────────────────────────────────
+ *
+ * `amountADesired`/`amountBDesired` are what the reader would like to put in. The router does NOT
+ * necessarily take them: `_addLiquidity` recomputes the second side from the reserves at the block
+ * it executes in, and deposits the smaller consistent pair, refunding nothing — it simply takes
+ * less of one side. The numbers that bind are `amountAMin`/`amountBMin`, which is where a slippage
+ * tolerance actually lives on this page. Set them to the desired amounts and any movement at all
+ * reverts; set them to zero and the reader has agreed to deposit at whatever ratio exists when the
+ * block lands, which for a pool somebody has just drained is a very different trade from the one on
+ * the screen. `INSUFFICIENT_A_AMOUNT` and `INSUFFICIENT_B_AMOUNT` are the two reverts those produce
+ * and the page names them.
+ *
+ * ── THE NATIVE SIDE IS `value` AND IS NOT AN ARGUMENT ────────────────────────────────────────
+ *
+ * Same trap as the swap: `addLiquidityETH` takes ONE token and infers the other side from the value
+ * sent, so building the token-token form for a pair containing the wrapped coin asks the reader for
+ * an allowance on WEMBER they have no reason to hold. Which shape to use is decided here, once,
+ * from a flag rather than from a sentinel address.
+ *
+ * ── FIRST DEPOSIT INTO AN EMPTY POOL ─────────────────────────────────────────────────────────
+ *
+ * There is no branch for it here and there must not be one: to the router a first deposit is the
+ * same call. The difference is entirely in what it MEANS — the ratio deposited becomes the price,
+ * and no arbitrage puts it back — and that belongs on the screen at the moment of signing, which is
+ * where `pages/add-liquidity.tsx` puts it.
+ */
+export function buildAddLiquidityTransaction(opts: {
+  readonly router: string
+  readonly tokenA: string
+  readonly tokenB: string
+  readonly amountADesired: bigint
+  readonly amountBDesired: bigint
+  readonly amountAMin: bigint
+  readonly amountBMin: bigint
+  readonly from: string
+  readonly nowSeconds: number
+  /** True when side A is the chain's native coin, which travels as `value`. */
+  readonly aNative: boolean
+  /** True when side B is the chain's native coin. */
+  readonly bNative: boolean
+  readonly deadlineSeconds?: number
+}): TransactionRequest {
+  const { router, tokenA, tokenB, from, aNative, bNative } = opts
+  const { amountADesired, amountBDesired, amountAMin, amountBMin } = opts
+  if (!router) throw new WalletError('there is no router on this network')
+  if (amountADesired <= 0n || amountBDesired <= 0n) {
+    throw new WalletError('a deposit needs an amount on both sides')
+  }
+  if (amountAMin > amountADesired || amountBMin > amountBDesired) {
+    throw new WalletError('a minimum cannot be larger than the amount it is a minimum of')
+  }
+  if (aNative && bNative) throw new WalletError('a deposit cannot be native on both sides')
+  if (tokenA.toLowerCase() === tokenB.toLowerCase()) {
+    throw new WalletError('a pool holds two different tokens')
+  }
+  const deadline = deadlineAt(opts.nowSeconds, opts.deadlineSeconds ?? DEADLINE_SECONDS)
+
+  if (aNative || bNative) {
+    // The router's argument order is (token, tokenDesired, tokenMin, ethMin) — the TOKEN side
+    // first, whichever side of the form it came from. Getting this the wrong way round is a
+    // transaction that succeeds and deposits the minimum of the two, which is not a revert anybody
+    // sees.
+    const token = aNative ? tokenB : tokenA
+    const tokenDesired = aNative ? amountBDesired : amountADesired
+    const tokenMin = aNative ? amountBMin : amountAMin
+    const nativeDesired = aNative ? amountADesired : amountBDesired
+    const nativeMin = aNative ? amountAMin : amountBMin
+    return {
+      from,
+      to: router,
+      data: encodeCall(SIG.addLiquidityETH, [
+        { type: 'address', value: token },
+        { type: 'uint', value: tokenDesired },
+        { type: 'uint', value: tokenMin },
+        { type: 'uint', value: nativeMin },
+        { type: 'address', value: from },
+        { type: 'uint', value: deadline },
+      ]),
+      value: toQuantity(nativeDesired),
+    }
+  }
+
+  return {
+    from,
+    to: router,
+    data: encodeCall(SIG.addLiquidity, [
+      { type: 'address', value: tokenA },
+      { type: 'address', value: tokenB },
+      { type: 'uint', value: amountADesired },
+      { type: 'uint', value: amountBDesired },
+      { type: 'uint', value: amountAMin },
+      { type: 'uint', value: amountBMin },
+      { type: 'address', value: from },
+      { type: 'uint', value: deadline },
+    ]),
+    value: '0x0',
+  }
+}
+
+/**
+ * The withdrawal.
+ *
+ * `liquidity` is an amount of the PAIR's own ERC-20, which the router has to be allowed to move —
+ * so this is the one flow on the surface where the token being approved is the pool itself, and the
+ * page says so rather than showing a bare address. The two minimums are what stops a withdrawal
+ * from executing against reserves somebody moved in the meantime; unlike the deposit, both sides
+ * come out in proportion, so the tolerance applies to both symmetrically.
+ */
+export function buildRemoveLiquidityTransaction(opts: {
+  readonly router: string
+  readonly tokenA: string
+  readonly tokenB: string
+  readonly liquidity: bigint
+  readonly amountAMin: bigint
+  readonly amountBMin: bigint
+  readonly from: string
+  readonly nowSeconds: number
+  readonly aNative: boolean
+  readonly bNative: boolean
+  readonly deadlineSeconds?: number
+}): TransactionRequest {
+  const { router, tokenA, tokenB, liquidity, amountAMin, amountBMin, from } = opts
+  const { aNative, bNative } = opts
+  if (!router) throw new WalletError('there is no router on this network')
+  if (liquidity <= 0n) throw new WalletError('a withdrawal must be more than zero')
+  if (aNative && bNative) throw new WalletError('a pool cannot be native on both sides')
+  if (tokenA.toLowerCase() === tokenB.toLowerCase()) {
+    throw new WalletError('a pool holds two different tokens')
+  }
+  const deadline = deadlineAt(opts.nowSeconds, opts.deadlineSeconds ?? DEADLINE_SECONDS)
+
+  if (aNative || bNative) {
+    return {
+      from,
+      to: router,
+      data: encodeCall(SIG.removeLiquidityETH, [
+        { type: 'address', value: aNative ? tokenB : tokenA },
+        { type: 'uint', value: liquidity },
+        { type: 'uint', value: aNative ? amountBMin : amountAMin },
+        { type: 'uint', value: aNative ? amountAMin : amountBMin },
+        { type: 'address', value: from },
+        { type: 'uint', value: deadline },
+      ]),
+      value: '0x0',
+    }
+  }
+
+  return {
+    from,
+    to: router,
+    data: encodeCall(SIG.removeLiquidity, [
+      { type: 'address', value: tokenA },
+      { type: 'address', value: tokenB },
+      { type: 'uint', value: liquidity },
+      { type: 'uint', value: amountAMin },
+      { type: 'uint', value: amountBMin },
+      { type: 'address', value: from },
+      { type: 'uint', value: deadline },
+    ]),
+    value: '0x0',
+  }
+}
+
+/**
+ * Creating a market, straight at the factory.
+ *
+ * ── THIS IS SEPARATE FROM THE FIRST DEPOSIT, AND THAT IS THE HONEST SHAPE ────────────────────
+ *
+ * The router creates a missing pair on its way through `addLiquidity`, so most people will never
+ * send this transaction: they will deposit into a pair that does not exist yet and get both in one
+ * signature, which is cheaper and is what the add-liquidity page does. This exists because an empty
+ * pair is a legitimate thing to want — a market can be created and left for somebody else to seed —
+ * and because a page that only ever created pairs as a side effect of a deposit could not explain
+ * what the deposit was doing.
+ *
+ * The three ways it fails are all decidable before it is sent: the same token twice, the zero
+ * address, and a pair that already exists. The page checks all three, because the factory's revert
+ * strings reach a reader as "execution reverted" and nothing else.
+ */
+export function buildCreatePairTransaction(opts: {
+  readonly factory: string
+  readonly tokenA: string
+  readonly tokenB: string
+  readonly from: string
+}): TransactionRequest {
+  const { factory, tokenA, tokenB, from } = opts
+  if (!factory) throw new WalletError('there is no factory on this network')
+  if (tokenA.toLowerCase() === tokenB.toLowerCase()) {
+    throw new WalletError('a pool holds two different tokens')
+  }
+  if (/^0x0{40}$/.test(tokenA) || /^0x0{40}$/.test(tokenB)) {
+    throw new WalletError('the zero address is not a token')
+  }
+  return {
+    from,
+    to: factory,
+    data: encodeCall(SIG.createPair, [
+      { type: 'address', value: tokenA },
+      { type: 'address', value: tokenB },
     ]),
     value: '0x0',
   }

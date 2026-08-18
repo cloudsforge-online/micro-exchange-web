@@ -42,11 +42,15 @@ import { ScrollToTop } from './components/scroll-to-top.tsx'
 import { AppShell } from './components/shell.tsx'
 import { AuthProvider } from './lib/auth.tsx'
 import { ChainProvider } from './lib/chain.tsx'
+import { AddLiquidityPage } from './pages/add-liquidity.tsx'
 import { ContractsPage } from './pages/contracts.tsx'
+import { NewPoolPage } from './pages/new-pool.tsx'
 import { NotFoundPage } from './pages/not-found.tsx'
 import { PoolPage } from './pages/pool.tsx'
 import { PoolsPage } from './pages/pools.tsx'
+import { PositionsPage } from './pages/positions.tsx'
 import { ReceiptsPage } from './pages/receipts.tsx'
+import { RemoveLiquidityPage } from './pages/remove-liquidity.tsx'
 import { SwapPage } from './pages/swap.tsx'
 
 export function App() {
@@ -67,7 +71,25 @@ export function App() {
                 which is what gets pasted into a conversation.
               */}
               <Route path="pools" element={<PoolsPage />} />
+              {/*
+                The two STATIC children come first. React-router ranks a literal segment above a
+                dynamic one whatever the order, so this is not load-bearing — but a reader of this
+                file should be able to see that `/pools/new` is not going to be handed to
+                `PoolPage` as a pair address, without having to know the ranking rules.
+              */}
+              <Route path="pools/positions" element={<PositionsPage />} />
+              <Route path="pools/new" element={<NewPoolPage />} />
               <Route path="pools/:pair" element={<PoolPage />} />
+              {/*
+                The write half (micro-org#497). Separate addresses rather than a mode on the pool
+                page: "add liquidity to this pool" is a thing somebody is sent a link to, and a
+                first deposit into an empty pool is a page with a warning on it that has to survive
+                being linked to. Neither is gated, for the reason above — a reader with no wallet
+                sees the whole form, the arithmetic and the warning, and is told at the button that
+                signing needs one.
+              */}
+              <Route path="pools/:pair/add" element={<AddLiquidityPage />} />
+              <Route path="pools/:pair/remove" element={<RemoveLiquidityPage />} />
               {/* The receipts are their own address, not a section of `/contracts`: that page proves
                   nobody can take your coins, and a receipt is the case where somebody already has
                   them. They also have to be linkable per network from the main site. */}

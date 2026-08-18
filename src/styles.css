@@ -459,6 +459,46 @@ body {
   max-width: 11rem;
 }
 
+/*
+ * A side of a deposit whose token cannot be chosen. It takes `cf-select`'s box so the two sides of
+ * the pair line up, and then removes the affordances of a control: no pointer, no hover, and the
+ * dimmed foreground that says the word is a LABEL. A real `<select>` with one option would look
+ * identical and invite a click that can never do anything.
+ */
+.xc-field__token--fixed {
+  color: var(--cf-fg-dim);
+  cursor: default;
+  pointer-events: none;
+}
+
+/*
+ * A field whose whole content is one checkbox and its sentence — the "give me the native coin
+ * back" choice on the withdraw form. It keeps the field's box so it sits in the same column as the
+ * amounts, and turns the stack into a row so the box does not become a tall empty rectangle
+ * around one line of text.
+ */
+.xc-field--check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--cf-space-xs);
+  cursor: pointer;
+  font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+/*
+ * The `+` between the two sides of a deposit. It is `aria-hidden` in the markup — a screen reader
+ * gets the two labelled fields, and "plus" read aloud between them is noise — so this is purely
+ * the visual join, at the same weight as the flip control it sits where.
+ */
+.xc-deposit__plus {
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-lg);
+  text-align: center;
+}
+
 .xc-field__note {
   display: flex;
   align-items: baseline;
@@ -569,6 +609,17 @@ body {
   color: var(--cf-fg);
 }
 
+/*
+ * The two refusals, stacked. They are one block rather than two loose fieldsets because they are
+ * one decision — "under what conditions may this not execute" — and a reader who sets the first
+ * and misses the second has left the default deadline in place without ever seeing it.
+ */
+.xc-limits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-md);
+}
+
 /* ---- the action, and what it says instead --------------------------------- */
 
 .xc-action {
@@ -599,14 +650,127 @@ body {
   font-size: var(--cf-text-sm);
 }
 
-.xc-sent {
+/*
+ * The irreversible-deposit warning, and anything else that has to be read BEFORE a signature
+ * rather than after a failure. It takes the warn ramp, not the critical one: nothing has gone
+ * wrong, and a reader who sees the same red here as on a revert learns to skim both.
+ */
+.xc-warning {
+  max-width: var(--cf-measure);
   margin: 0;
   padding: var(--cf-space-xs) var(--cf-space-sm);
-  border: 1px solid var(--cf-good-edge);
+  border: 1px solid var(--cf-warn-edge);
   border-radius: var(--cf-radius);
-  background: var(--cf-good-wash);
-  color: var(--cf-good-text);
+  background: var(--cf-warn-wash);
+  color: var(--cf-warn-text);
   font-size: var(--cf-text-sm);
+  line-height: var(--cf-leading-snug);
+}
+
+/* ---- transactions this page sent ---------------------------------------- */
+
+/*
+ * THIS REPLACED A SINGLE "sent ✓" LINE, AND THE SHAPE IS THE POINT.
+ *
+ * The old rule styled one green box that appeared on broadcast and said nothing afterwards. A
+ * broadcast is not an outcome: the same hash can still be pending, mined, or mined-and-reverted,
+ * and only the last of those means the reader's money did not move after they were told it had.
+ * So this is a LIST of entries that each carry their own state, and the state is a word before it
+ * is a colour — `components/transactions.tsx` writes four different sentences.
+ *
+ * The border-left is the only thing that differs between the states visually. Colour is the last
+ * carrier of meaning here rather than the first, which is what makes the list legible to a reader
+ * who cannot distinguish the four ramps.
+ */
+.xc-txs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+}
+
+.xc-txs__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xc-tx {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--cf-space-2xs) var(--cf-space-xs);
+  padding: var(--cf-space-xs) var(--cf-space-sm);
+  border: 1px solid var(--cf-line);
+  border-left-width: 3px;
+  border-radius: var(--cf-radius);
+  background: var(--cf-bg-raised);
+  font-size: var(--cf-text-sm);
+}
+
+/* Pending is the accent, not the warn ramp: waiting for a block is the ordinary case. */
+.xc-tx--pending {
+  border-left-color: var(--cf-accent);
+}
+
+.xc-tx--mined {
+  border-left-color: var(--cf-good);
+}
+
+.xc-tx--reverted {
+  border-left-color: var(--cf-critical);
+}
+
+/* "We stopped asking" is not a verdict, so it takes the warn ramp rather than the critical one. */
+.xc-tx--lost {
+  border-left-color: var(--cf-warn);
+}
+
+.xc-tx__what {
+  font-weight: 600;
+}
+
+.xc-tx__state {
+  flex: 1 1 12rem;
+  color: var(--cf-fg-dim);
+  line-height: var(--cf-leading-snug);
+}
+
+.xc-tx__link {
+  flex: 0 0 auto;
+  font-size: var(--cf-text-xs);
+}
+
+/*
+ * Dismiss is a link-shaped button, not a `cf-btn`. It removes a row from a list on one page and
+ * does nothing to the chain, and giving it the same weight as "Deposit" two elements above would
+ * be the interface implying it cancels something.
+ */
+.xc-tx__forget {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cf-fg-mute);
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  cursor: pointer;
+}
+
+.xc-tx__forget:hover {
+  color: var(--cf-fg);
+}
+
+.xc-txs__note {
+  max-width: var(--cf-measure);
+  margin: 0;
+  color: var(--cf-fg-mute);
+  font-size: var(--cf-text-xs);
+  line-height: var(--cf-leading-snug);
 }
 
 /* ---- the terms, as a definition list ----------------------------------- */
@@ -829,6 +993,16 @@ body {
 .xc-table__unit {
   color: var(--cf-fg-mute);
   font-size: var(--cf-text-2xs);
+}
+
+/*
+ * The actions column. `white-space: nowrap` because "Swap Supply" broken across two lines reads as
+ * one control called "Swap" and another called "Supply" belonging to the row below it; the column
+ * is narrow enough that the table's own horizontal scroll on a phone is the better trade.
+ */
+.xc-table__actions {
+  white-space: nowrap;
+  text-align: right;
 }
 
 .xc-table__none {

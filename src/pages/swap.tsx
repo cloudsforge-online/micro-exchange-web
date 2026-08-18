@@ -34,7 +34,9 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { DEFAULT_TOLERANCE_BPS, TOLERANCES } from '../components/limits.tsx'
 import { Failed, Loading, NoEndpoint, NoExchange } from '../components/states.tsx'
+import { Transactions } from '../components/transactions.tsx'
 import { InvariantCurve } from '../components/curve.tsx'
 import { useChain } from '../lib/chain.tsx'
 import {
@@ -50,8 +52,9 @@ import {
   parseUnits,
   SWAP_TERMS,
   shortAddress,
+  toDecimalString,
 } from '../lib/format.ts'
-import { explorerTxUrl, hosts } from '../lib/hosts.ts'
+import { hosts } from '../lib/hosts.ts'
 import {
   readAllowance,
   readAllPairs,
@@ -63,6 +66,7 @@ import {
 import { balance as readNativeBalance } from '../lib/rpc.ts'
 import { useResource } from '../lib/resource.ts'
 import { poolPath } from '../lib/routes.ts'
+import { useTransactions } from '../lib/tx.ts'
 import { useWalletAddress } from '../lib/usewallet.tsx'
 import {
   buildApproveTransaction,
@@ -81,13 +85,6 @@ import {
  * `deployment.wrapped` plus a boolean at exactly one point.
  */
 const NATIVE = 'native'
-
-/** The tolerances offered, in basis points. Three, because a free-text field invites 50%. */
-const TOLERANCES: readonly { readonly bps: number; readonly label: string }[] = [
-  { bps: 10, label: '0.1%' },
-  { bps: 50, label: '0.5%' },
-  { bps: 100, label: '1%' },
-]
 
 export function SwapPage() {
   const chain = useChain()
@@ -138,7 +135,7 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
   const [from, setFrom] = useState<string>(wanted.from || NATIVE)
   const [to, setTo] = useState<string>(wanted.to)
   const [amount, setAmount] = useState('')
-  const [toleranceBps, setToleranceBps] = useState(TOLERANCES[1]?.bps ?? 50)
+  const [toleranceBps, setToleranceBps] = useState(DEFAULT_TOLERANCE_BPS)
 
   // The first market that exists decides the default "to", once, when the pools arrive. Without
   // this the form opens with nothing on the other side and a reader has to guess that a second
@@ -257,8 +254,22 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
 
   /* -- signing ------------------------------------------------------------------------------- */
 
+  /**
+   * The transactions this page sent, followed until the chain answers.
+   *
+   * This replaces a `sent` state that held one hash and a link to the explorer. That shape could
+   * not say whether the swap worked — and, worse, said "Swap sent" about a transaction that was
+   * mined and reverted. `lib/tx.ts` carries the whole argument; the callback here is what re-reads
+   * the reserves and the balance at the moment they actually changed rather than at broadcast.
+   */
+  const txs = useTransactions(
+    useCallback(() => {
+      markets.reload()
+      held.reload()
+      allowance.reload()
+    }, [markets.reload, held.reload, allowance.reload]),
+  )
   const [busy, setBusy] = useState<'approve' | 'swap' | null>(null)
-  const [sent, setSent] = useState<{ readonly what: string; readonly hash: string } | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
 
   const send = useCallback(
@@ -278,8 +289,7 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
               from: wallet.address,
             }),
           )
-          setSent({ what: 'Approval', hash })
-          allowance.reload()
+          txs.track('Approval', hash)
         } else {
           if (path === null || amountIn === null || worstCase === null) return
           const hash = await sendTransaction(
@@ -295,10 +305,8 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
               toNative,
             }),
           )
-          setSent({ what: 'Swap', hash })
+          txs.track('Swap', hash)
           setAmount('')
-          markets.reload()
-          held.reload()
         }
       } catch (err: unknown) {
         // Declining is a decision, not a failure. Everything else gets the wallet's own message,
@@ -310,7 +318,18 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
         setBusy(null)
       }
     },
-    [provider, wallet.address, tokenIn, amountIn, path, worstCase, deployment, fromNative, toNative],
+    [
+      provider,
+      wallet.address,
+      tokenIn,
+      amountIn,
+      path,
+      worstCase,
+      deployment,
+      fromNative,
+      toNative,
+      txs.track,
+    ],
   )
 
   /* -- the swap of the two sides ------------------------------------------------------------ */
@@ -397,8 +416,12 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
                     <button
                       type="button"
                       className="xc-linkish"
+                      // `toDecimalString`, not `formatUnits`: the latter groups thousands, and a
+                      // balance of 1,234.5 written into this field comes back through `parseUnits`
+                      // as null — the form then says "enter an amount" under an amount it put
+                      // there itself.
                       onClick={() =>
-                        setAmount(formatUnits(held.data as bigint, tokenIn?.decimals ?? 18, 8))
+                        setAmount(toDecimalString(held.data as bigint, tokenIn?.decimals ?? 18))
                       }
                     >
                       <span className="cf-num">
@@ -506,14 +529,7 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
                 {problem}
               </p>
             )}
-            {sent !== null && (
-              <p className="xc-sent" role="status">
-                {sent.what} sent.{' '}
-                <a href={explorerTxUrl(estate, sent.hash)} target="_blank" rel="noreferrer">
-                  {shortAddress(sent.hash)} on the explorer
-                </a>
-              </p>
-            )}
+            <Transactions transactions={txs.transactions} estate={estate} onForget={txs.forget} />
           </section>
 
           {/* ------------------------------------------------------------------ the picture */}

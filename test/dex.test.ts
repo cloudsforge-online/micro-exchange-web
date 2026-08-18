@@ -42,11 +42,17 @@ import {
   FEE_NUMERATOR,
   getAmountIn,
   getAmountOut,
+  liquidityMinted,
+  MINIMUM_LIQUIDITY,
   minimumOut,
   pairFor,
+  portionOf,
   priceImpactBps,
   quote,
+  shareBps,
   sortTokens,
+  sqrt,
+  underlyingOf,
 } from '../src/lib/dex.ts'
 
 /** A round pool, in wei, on both sides. 1,000 of one token against 4,000,000 of the other. */
@@ -189,6 +195,178 @@ test('the minimum output rounds DOWN, and zero tolerance means no reduction', ()
     const out = 7_777_777_777_777_777_777n
     assert.ok(minimumOut(out, bps) <= (out * BigInt(10_000 - bps)) / 10_000n)
   }
+})
+
+/* ── the liquidity-provider arithmetic ─────────────────────────────────────────────────────────
+ *
+ * Same standard as the swap vectors above, and the same disclaimer: these are evaluated from
+ * `UniswapV2Pair.mint` and `.burn` by hand in exact integer arithmetic, not replayed off a chain.
+ * What they catch is this file drifting from the pair — a `MINIMUM_LIQUIDITY` forgotten on the first
+ * branch, a `min()` that took the wrong side, a `sqrt` done in floating point.
+ *
+ * The last of those is the one worth naming. `sqrt(a·b)` on a first deposit of two 18-decimal
+ * amounts routinely exceeds 2⁵³ by twenty orders of magnitude, and `Math.sqrt(Number(x))` returns a
+ * number with the right exponent and the wrong value — which would render as a plausible LP balance
+ * that the pair then disagrees with, on the one screen where the reader cannot check.
+ */
+
+test('sqrt IS EXACT INTEGER ARITHMETIC, NOT Math.sqrt OF A Number', () => {
+  assert.equal(sqrt(0n), 0n)
+  assert.equal(sqrt(1n), 1n)
+  assert.equal(sqrt(4n), 2n)
+  // Truncating, like the contract: never the nearest, always the floor.
+  assert.equal(sqrt(8n), 2n)
+  assert.equal(sqrt(15n), 3n)
+  assert.equal(sqrt(16n), 4n)
+  // The case a float gets wrong. 10³⁶ is `(10¹⁸)²`, and 10¹⁸ is not representable as an exact
+  // double — `Math.sqrt(1e36)` is 1.0000000000000001e18, which is not 10¹⁸.
+  assert.equal(sqrt(10n ** 36n), 10n ** 18n)
+  assert.equal(sqrt(10n ** 36n - 1n), 10n ** 18n - 1n)
+  // A property, over magnitudes a float cannot hold: `r² ≤ v < (r+1)²` at every one of them.
+  for (const v of [2n, 99n, 10n ** 18n, 10n ** 30n + 7n, (2n ** 128n) / 3n, 2n ** 200n - 1n]) {
+    const r = sqrt(v)
+    assert.ok(r * r <= v, `sqrt(${v}) is too large`)
+    assert.ok((r + 1n) * (r + 1n) > v, `sqrt(${v}) is too small`)
+  }
+  assert.throws(() => sqrt(-1n), RangeError)
+})
+
+test('THE FIRST DEPOSIT BURNS MINIMUM_LIQUIDITY AND SETS THE PRICE ITSELF', () => {
+  // The branch the add-liquidity page puts a warning over. With no supply, the two amounts are not
+  // checked against anything — there is nothing to check them against — so whatever ratio is
+  // deposited BECOMES the price, and the depositor receives `sqrt(a·b) − 1000`.
+  assert.equal(MINIMUM_LIQUIDITY, 1_000n)
+  const first = liquidityMinted({
+    amount0: ONE,
+    amount1: 4n * ONE,
+    reserve0: 0n,
+    reserve1: 0n,
+    totalSupply: 0n,
+  })
+  assert.equal(first, sqrt(ONE * 4n * ONE) - MINIMUM_LIQUIDITY)
+  assert.equal(first, 2n * ONE - 1_000n)
+
+  // Two different ratios both succeed on an empty pool, at the same product. That IS the hazard:
+  // nothing here can tell a reader they have the price wrong, which is why the page says so instead.
+  const skewed = liquidityMinted({
+    amount0: 4n * ONE,
+    amount1: ONE,
+    reserve0: 0n,
+    reserve1: 0n,
+    totalSupply: 0n,
+  })
+  assert.equal(skewed, first)
+
+  // A deposit so small that `sqrt(a·b)` does not clear the burn is not a free deposit — the pair
+  // reverts with INSUFFICIENT_LIQUIDITY_MINTED. Null, so the page can refuse rather than print 0.
+  assert.equal(
+    liquidityMinted({ amount0: 100n, amount1: 100n, reserve0: 0n, reserve1: 0n, totalSupply: 0n }),
+    null,
+  )
+  assert.equal(
+    liquidityMinted({ amount0: 0n, amount1: ONE, reserve0: 0n, reserve1: 0n, totalSupply: 0n }),
+    null,
+  )
+})
+
+test('a later deposit mints the SMALLER of the two proportional claims', () => {
+  // `min(a0·S/r0, a1·S/r1)`, and the excess on the other side is a gift to the pool. The router
+  // computes an optimal counter-amount precisely so a reader does not make that gift by accident,
+  // which is what the add-liquidity form fills the second field from.
+  const supply = 1_000n * ONE
+  const balanced = liquidityMinted({
+    amount0: 10n * ONE,
+    amount1: 40n * ONE,
+    reserve0: 100n * ONE,
+    reserve1: 400n * ONE,
+    totalSupply: supply,
+  })
+  assert.equal(balanced, supply / 10n)
+
+  // Twice the token-1 side, at the same ratio, mints exactly the same amount: the surplus is lost.
+  const lopsided = liquidityMinted({
+    amount0: 10n * ONE,
+    amount1: 80n * ONE,
+    reserve0: 100n * ONE,
+    reserve1: 400n * ONE,
+    totalSupply: supply,
+  })
+  assert.equal(lopsided, balanced)
+
+  // A mint that rounds to nothing is null, not zero, for the same reason as above.
+  assert.equal(
+    liquidityMinted({
+      amount0: 1n,
+      amount1: 1n,
+      reserve0: 10n ** 30n,
+      reserve1: 10n ** 30n,
+      totalSupply: 1_000n,
+    }),
+    null,
+  )
+  // A positive supply against an empty reserve is a pair whose state did not read consistently.
+  assert.equal(
+    liquidityMinted({
+      amount0: ONE,
+      amount1: ONE,
+      reserve0: 0n,
+      reserve1: ONE,
+      totalSupply: supply,
+    }),
+    null,
+  )
+})
+
+test('a share is basis points of the supply, and NOTHING to be a share of is null', () => {
+  assert.equal(shareBps(0n, 1_000n), 0)
+  assert.equal(shareBps(1_000n, 1_000n), 10_000)
+  assert.equal(shareBps(1n, 1_000n), 10)
+  // Truncating: a dust holding reads as 0 bps here and `formatBps` renders it as "<0.01%" rather
+  // than as nothing. A holder of dust should be told it is dust.
+  assert.equal(shareBps(1n, 10_000_000n), 0)
+  // Null, not zero. "You hold none of it" and "there is none of it" are different sentences.
+  assert.equal(shareBps(ONE, 0n), null)
+  assert.equal(shareBps(-1n, 1_000n), null)
+})
+
+test('WHAT AN LP BALANCE IS WORTH IS PRO RATA, AND ERRS LOW', () => {
+  const supply = 1_000n * ONE
+  const worth = underlyingOf({
+    liquidity: supply / 4n,
+    totalSupply: supply,
+    reserve0: 100n * ONE,
+    reserve1: 400n * ONE,
+  })
+  assert.deepEqual(worth, { amount0: 25n * ONE, amount1: 100n * ONE })
+
+  // Truncating in the pool's favour, which is the direction the withdraw form needs: these numbers
+  // are what a reader sets `amountAMin`/`amountBMin` against, and a minimum computed from an
+  // over-estimate is a withdrawal that reverts and costs gas.
+  const dusty = underlyingOf({ liquidity: 1n, totalSupply: 3n, reserve0: 10n, reserve1: 10n })
+  assert.deepEqual(dusty, { amount0: 3n, amount1: 3n })
+
+  assert.equal(underlyingOf({ liquidity: 0n, totalSupply: supply, reserve0: 1n, reserve1: 1n }), null)
+  assert.equal(underlyingOf({ liquidity: ONE, totalSupply: 0n, reserve0: 1n, reserve1: 1n }), null)
+  // More than the whole supply is not a position, it is a misread — refuse rather than extrapolate.
+  assert.equal(
+    underlyingOf({ liquidity: supply + 1n, totalSupply: supply, reserve0: 1n, reserve1: 1n }),
+    null,
+  )
+})
+
+test('100% OF A BALANCE IS THE BALANCE, BIT FOR BIT, NOT A DIVISION THAT HAPPENS TO BE EXACT', () => {
+  // A "remove everything" that leaves one wei behind leaves a position on the positions page, which
+  // reads as the withdrawal having half-failed. `(b*100n)/100n` is exact today; the day somebody
+  // adds a 33% step to `PORTIONS` and reaches for the same expression, it would not be.
+  const odd = 123_456_789_987_654_321n
+  assert.equal(portionOf(odd, 100), odd)
+  assert.equal(portionOf(odd, 50), odd / 2n)
+  assert.equal(portionOf(odd, 25), odd / 4n)
+  // Truncating down, so a portion is never more than the reader has.
+  assert.equal(portionOf(3n, 50), 1n)
+  assert.equal(portionOf(odd, 150), odd)
+  assert.equal(portionOf(odd, 0), 0n)
+  assert.equal(portionOf(0n, 100), 0n)
 })
 
 test('the curve is a hyperbola through the current reserves, not a straight line', () => {

@@ -23,8 +23,8 @@ export interface AppRoute {
 }
 
 /**
- * Three routes, and the argument for each one being separate rather than a section of the swap
- * page:
+ * Four top-level routes, and the argument for each one being separate rather than a section of the
+ * swap page:
  *
  *   `''`          — the swap. The one page a stranger needs, and the only one that asks for a
  *                   signature. Everything on it is about one trade against one pool.
@@ -44,12 +44,32 @@ export interface AppRoute {
  *                   also the address a reader is sent to from the main site and from the network
  *                   pages, on either network, and each has to be linkable on its own.
  *
- * There is deliberately no "add liquidity" page and no positions page. Both would need write paths
- * this surface has not built, and a menu entry that leads to an explanation of why the feature is
- * absent is worse than the feature being absent — it implies somebody decided against it rather
- * than that it has not been reached yet. §6 phase H of docs/ecosystem/39 scopes this surface to a
- * swap, a list and a proof; `receipts` is phase G's half of the same document, which §7 requires
- * to have a surface of its own before anything is issued to anybody.
+ * ── THE LIQUIDITY PAGES ARE CHILDREN OF `pools`, NOT A FIFTH ENTRY ───────────────────────────
+ *
+ * This block used to say there was deliberately no add-liquidity page and no positions page,
+ * because both needed write paths the surface had not built. micro-org#497 built them, and they
+ * live UNDER `pools` rather than beside it:
+ *
+ *   `pools/positions`     — what the connected address holds, across every market on the chain.
+ *   `pools/new`           — create a market. The factory is permissionless, checked against the
+ *                           deployed contract on both chains rather than assumed.
+ *   `pools/:pair/add`     — put two tokens in.
+ *   `pools/:pair/remove`  — take them back out.
+ *
+ * Under `pools` because that is what they are about — a reader looking for their own liquidity is
+ * looking at the market list, not at a separate product — and because `pools` is already
+ * `wildcard: true`, so the router mounts them, nginx already serves them, and this table does not
+ * change. `test/routes.test.ts` checks only the FIRST segment of each mounted route against this
+ * list, which is what makes that true rather than a coincidence.
+ *
+ * `positions` and `new` cannot collide with `:pair`: a pair segment is a twenty-byte hex address
+ * and `PoolPage` rejects anything that is not one, and react-router ranks a static segment above a
+ * dynamic one regardless. The two static children are still declared FIRST in `src/app.tsx`, so the
+ * ordering is visible to somebody reading it rather than resting on a ranking rule.
+ *
+ * §6 phase H of docs/ecosystem/39 scoped this surface to a swap, a list and a proof; the write half
+ * is #497. `receipts` is phase G's half of the same document, which §7 requires to have a surface
+ * of its own before anything is issued to anybody.
  */
 export const ROUTES: readonly AppRoute[] = [
   { path: '', label: 'Swap', wildcard: false },
@@ -79,6 +99,29 @@ export const NON_INDEX_PATHS: readonly string[] = ROUTES.filter((route) => route
 export function poolPath(pair: string): string {
   return `/pools/${encodeURIComponent(pair.toLowerCase())}`
 }
+
+/**
+ * The two write pages for one pool, and the two that are not about a particular pool.
+ *
+ * Built from `poolPath` rather than from their own template, so that the encoding and the
+ * lower-casing are decided in exactly one place. A pair address that reached a link with its
+ * checksum casing intact would still work — react-router does not care — but it would produce two
+ * different URLs for one market, which is two entries in a reader's history and two things a
+ * crawler indexes.
+ */
+export function addLiquidityPath(pair: string): string {
+  return `${poolPath(pair)}/add`
+}
+
+export function removeLiquidityPath(pair: string): string {
+  return `${poolPath(pair)}/remove`
+}
+
+/** What the connected wallet holds. A constant, because it takes no argument and never will. */
+export const POSITIONS_PATH = '/pools/positions'
+
+/** Creating a market. Static, and it cannot be mistaken for a pair address. */
+export const NEW_POOL_PATH = '/pools/new'
 
 /**
  * The swap page, pre-filled with a pair.

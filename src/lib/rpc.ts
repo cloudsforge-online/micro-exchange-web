@@ -168,3 +168,47 @@ export async function balance(address: string): Promise<bigint | null> {
     return null
   }
 }
+
+/** What the chain says happened to a transaction, once it says anything. */
+export interface TransactionReceipt {
+  /** `status` is 1 or 0 in the receipt; nothing else is a receipt this surface will read. */
+  readonly status: 'mined' | 'reverted'
+  readonly blockNumber: number | null
+}
+
+/**
+ * A transaction's receipt, or **null while the chain has none**.
+ *
+ * ── NULL IS "NOT YET", NOT "FAILED", AND THE CALLER MUST KEEP ASKING ─────────────────────────
+ *
+ * A node answers `null` for a transaction it has not mined, for one it has never seen, and — for a
+ * few seconds after a broadcast — for one it is about to mine. Those are the same string on the
+ * wire and this function does not pretend to tell them apart. So does an unreachable node, which is
+ * the one case that could look like a permanent pending; `lib/tx.tsx` bounds the wait rather than
+ * spinning forever, and says "still pending" with a link to the explorer rather than inventing a
+ * verdict.
+ *
+ * A receipt with `status: 0x0` is a transaction that was MINED AND REVERTED. The gas was spent, the
+ * hash is real, and nothing moved. That is a third state and it is the one every DEX frontend drops
+ * — a UI that shows "sent" and then goes quiet has told somebody their deposit worked when it did
+ * not.
+ */
+export async function transactionReceipt(hash: string): Promise<TransactionReceipt | null> {
+  try {
+    const result = await rpc<{ status?: unknown; blockNumber?: unknown } | null>(
+      'eth_getTransactionReceipt',
+      [hash],
+    )
+    if (result === null || typeof result !== 'object') return null
+    if (typeof result.status !== 'string') return null
+    const status = BigInt(result.status)
+    const height =
+      typeof result.blockNumber === 'string' ? Number(BigInt(result.blockNumber)) : Number.NaN
+    return {
+      status: status === 1n ? 'mined' : 'reverted',
+      blockNumber: Number.isSafeInteger(height) ? height : null,
+    }
+  } catch {
+    return null
+  }
+}
