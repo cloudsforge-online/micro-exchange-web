@@ -32,6 +32,7 @@
  * costs, and a button that quietly opens a second wallet prompt after the first is how people sign
  * things they did not read.
  */
+import { surface } from '@cloudsforge/ui/surfaces'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { DEFAULT_TOLERANCE_BPS, TOLERANCES } from '../components/limits.tsx'
@@ -68,6 +69,7 @@ import { useResource } from '../lib/resource.ts'
 import { poolPath } from '../lib/routes.ts'
 import { useTransactions } from '../lib/tx.ts'
 import { useWalletAddress } from '../lib/usewallet.tsx'
+import { viewedSurfaceUrl } from '../lib/viewed.ts'
 import {
   buildApproveTransaction,
   buildSwapTransaction,
@@ -615,7 +617,81 @@ function SwapConsole({ deployment }: { readonly deployment: Deployment }) {
           ))}
         </dl>
       </section>
+
+      <DeskElsewhere chainName={deployment.chainName} />
     </div>
+  )
+}
+
+/**
+ * The address of Forge Hub's conversion desk, relative to Hub's origin.
+ *
+ * SPELLED HERE, AND THAT IS A COMPROMISE RATHER THAN THE PATTERN. The estate's pattern for a path
+ * inside somebody else's surface is `HUB_MINE_PATH` in `@cloudsforge/ui/mining.tsx`, which exists
+ * because thirteen surfaces link at the miner and thirteen copies of a string is thirteen chances
+ * for one of them to go on pointing at a route after it moves. Exactly one surface links at the
+ * desk — this one — so the shared constant would be a registry of one, and it is not this ticket's
+ * to add to `@cloudsforge/ui`.
+ *
+ * The moment a second surface wants it, it belongs upstream beside `HUB_MINE_PATH` and this
+ * constant goes. Until then the failure to watch for is `micro-hub-web` moving the route: its
+ * `ROUTES` table owns the address, nothing here can read that table, and a 404 is what a reader
+ * would get.
+ */
+const HUB_CONVERT_PATH = '/convert'
+
+/**
+ * The seam to the custodial desk — the same verb, a completely different arrangement.
+ *
+ * ── WHY THIS IS ON THE PAGE AT ALL ────────────────────────────────────────────────────────────
+ *
+ * "Swap" is one word for two things that differ in the only way that matters: who is holding the
+ * coins while it happens. A reader who has met one of them assumes the other works the same way,
+ * and both directions of that assumption are expensive — someone expecting a quoted rate signs a
+ * transaction into a pool their own size moves, or someone expecting self-custody hands an amount
+ * to a desk and looks for it in a wallet that will never show it. So the two are named beside each
+ * other, once, with the distinction spelled out rather than implied by which page you are on.
+ *
+ * ── THE HOSTNAME IS RESOLVED, THE PATH IS NOT INVENTED ────────────────────────────────────────
+ *
+ * `viewedSurfaceUrl('hub')` composes the origin from the shared registry row and from the network
+ * the reader is VIEWING, so a reader who pressed Testnet is offered the testnet desk — where the
+ * account this page's sibling estate knows about actually is. `hosts().hub` would have sent them to
+ * a mainnet account that holds none of the balances they were just looking at, and
+ * `test/no-build-time-config.test.ts` would fail the build over a literal hostname anyway.
+ *
+ * The NAME comes off the same row. A hand-typed "Forge Hub" here is a second copy of a surface's
+ * name in a bundle that ships separately from the registry that owns it.
+ */
+function DeskElsewhere({ chainName }: { readonly chainName: string }) {
+  const hub = surface('hub')
+  return (
+    <section className="xc-elsewhere" aria-label="Trading with CloudsForge instead">
+      <h2 className="xc-elsewhere__title">The other way to swap</h2>
+      <p className="xc-note">
+        {hub.name}’s desk is a different arrangement, not a second door to this one. There you trade
+        with CloudsForge: it quotes you a rate, sells you the coin out of its own holdings, and keeps
+        custody of both sides. Here you trade with a contract on {chainName}: the price is whatever
+        the pool is holding, your own wallet signs, and CloudsForge holds nothing and can put nothing
+        back.
+      </p>
+      {/*
+        WHAT THE DESK PAYS IN IS A FACT WITH AN EXPIRY DATE. It buys every asset and pays only
+        EMBER until micro-org#492 and #493 close, which is stated on the desk itself
+        (`DESK_BUYS` in micro-hub-web's `src/pages/convert.tsx`) and repeated here because a link
+        that does not say what is on the other side of it is a link nobody presses. When those
+        close, this sentence and that constant change together — and this is the copy that will
+        still read as true and no longer be.
+      */}
+      <p className="xc-note">
+        Today it sells EMBER for the other coins your CloudsForge account holds, which is one way to
+        come by some. What it credits is that account’s balance and not the wallet this page reads:
+        moving it here is a withdrawal, and a separate step.
+      </p>
+      <p className="xc-note">
+        <a href={`${viewedSurfaceUrl('hub')}${HUB_CONVERT_PATH}`}>Convert in {hub.name} →</a>
+      </p>
+    </section>
   )
 }
 
