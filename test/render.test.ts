@@ -38,13 +38,16 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { createElement } from 'react'
 import { App } from '../src/app.tsx'
+import { pairFor } from '../src/lib/dex.ts'
 import { NOT_CUSTODIED } from '../src/lib/format.ts'
-import { assertMounted, mount, withScreen, type Screen } from './dom.ts'
+import { assertMounted, mount, withScreen, type MountOptions, type Screen } from './dom.ts'
 import {
   chain,
   ethCalls,
+  holding,
   rpcMethods,
   market,
+  wallet,
   CHAIN_NOW,
   DEMBER,
   EMBER_NEFELI,
@@ -59,10 +62,12 @@ import {
   QUIET,
   RECEIPT_CHAIN_ID,
   SILT,
+  WALLET_TX_HASH,
   WEMBER,
   type ChainFixture,
   type FixtureReceipt,
   type FixtureRedemption,
+  type WalletStub,
 } from './fixtures.ts'
 
 /** This surface's own address on the mainnet estate. */
@@ -80,13 +85,23 @@ const app = () => createElement(App)
  * The `unmodelled` check lives in the helper rather than in each scenario because it is the kind of
  * assertion that is worth nothing if it has to be remembered and everything if it is automatic.
  * Scenarios whose SUBJECT is a read that fails call `withScreen` directly instead.
+ *
+ * `stub` installs an injected wallet. It is the fourth argument rather than part of the fixture
+ * because the chain and the wallet are separate things that a scenario deliberately disagrees about
+ * — a wallet on chain 1 reading a page pointed at 7411 is the case the switch button exists for.
  */
 async function page(
   fixture: ChainFixture,
   path: string,
   body: (screen: Screen) => Promise<void>,
+  stub?: WalletStub,
 ): Promise<void> {
-  await withScreen(app(), { url: `${AT}${path}`, routes: fixture.routes }, async (screen) => {
+  const options: MountOptions = {
+    url: `${AT}${path}`,
+    routes: fixture.routes,
+    ...(stub === undefined ? {} : { windowExtras: { ethereum: stub.provider } }),
+  }
+  await withScreen(app(), options, async (screen) => {
     await screen.settle()
     await body(screen)
     assert.deepEqual(
@@ -398,6 +413,550 @@ describe('a single pool', () => {
   })
 })
 
+/* ══════════════════════════════════════════════════════════════════════════════════════════════
+ * THE LIQUIDITY PAGES, WHERE THIS SURFACE STOPS BEING A READING AND BECOMES A SIGNATURE.
+ *
+ * Every scenario above can fail by showing a wrong number. The ones below can fail by showing a
+ * wrong number NEXT TO A BUTTON THAT SPENDS SOMEBODY'S MONEY, and those are not the same size of
+ * mistake. So each of them asserts on `stub.sent` — the exact `{ from, to, data, value }` the page
+ * handed the wallet — as well as on what was drawn.
+ *
+ * `test/wallet.test.ts` proves the builders encode the right words in the right order. These prove
+ * the PAGE reaches for the right builder with the reader's own numbers, and that what it drew
+ * around it was true at the moment it was pressed. NEITHER proves a real wallet accepts the
+ * calldata: that is `wallet-extension/test/e2e/`, against a real node, with no interception at all.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** The value of a form control, as a string. Read for the fields the page fills in by itself. */
+const valueOf = (el: Element): string => (el as unknown as { value: string }).value
+
+/**
+ * The pool these scenarios supply, with its LP supply CHOSEN rather than derived.
+ *
+ * `market()` defaults the supply to `sqrt(reserve0·reserve1)`, which is what a pair mints on a
+ * first deposit and is 351,781.18… here. A tenth of that is not a round number of anything, so
+ * every amount downstream would be asserted with a regex loose enough to pass against an
+ * off-by-a-decimal-place. A supply of 100,000 makes `LP` exactly a tenth of the pool and every
+ * figure on both pages exact.
+ *
+ * BELOW sqrt(k), not above, because that is the only side that can exist: fees raise `k` without
+ * minting, so a pool that has traded has a supply under its own root, and a fixture with a supply
+ * over it would be a pool no sequence of transactions could produce.
+ */
+const SUPPLIED = market(WEMBER, 25_000n * 10n ** 18n, NEFELI, 4_950_000n * 10n ** 18n, {
+  totalSupply: 100_000n * 10n ** 18n,
+})
+
+/** What the holder has of it: a tenth, exactly. */
+const LP = 10_000n * 10n ** 18n
+
+/** The pool the deposit scenarios use, which is `test/fixtures.ts`'s own. NEFELI is `token0`. */
+const ADD = `/pools/${EMBER_NEFELI.address}/add`
+const REMOVE = `/pools/${SUPPLIED.address}/remove`
+
+/** Enough of both tokens to deposit, and the router already allowed to move the ERC-20 one. */
+const funded = (options: Parameters<typeof chain>[0] = {}): ChainFixture =>
+  chain({
+    balances: { [holding(NEFELI.address, HOLDER)]: 20_000n * 10n ** 18n },
+    allowances: { [holding(NEFELI.address, HOLDER)]: 20_000n * 10n ** 18n },
+    native: { [HOLDER]: 100n * 10n ** 18n },
+    ...options,
+  })
+
+/** Type an amount into the NEFELI side and press the one button that signs. */
+async function depositNefeli(screen: Screen, amount = '9900'): Promise<void> {
+  await screen.type(screen.byRole('textbox', 'Amount of NEFELI to deposit'), amount)
+  await screen.settle()
+  await screen.click(screen.byRole('button', 'Add liquidity'))
+  await screen.settle()
+}
+
+describe('adding liquidity', () => {
+  it('FILLS THE OTHER SIDE FROM THE RESERVES, and asks the router for nothing', async () => {
+    // The deliberate difference from `swap.tsx`, argued at the top of `pages/add-liquidity.tsx`: a
+    // swap quote is a FILL and is read from the router, a deposit's counter-amount is not a fill at
+    // all — `_addLiquidity` recomputes it in the block it executes in. Asking per keystroke would
+    // buy a number that is just as provisional, one round trip later.
+    const fixture = funded()
+    await page(
+      fixture,
+      ADD,
+      async (screen) => {
+        assertMounted(screen)
+        await screen.type(screen.byRole('textbox', 'Amount of NEFELI to deposit'), '9900')
+        await screen.settle()
+
+        // 9,900 NEFELI against reserves of 4,950,000 NEFELI and 25,000 EMBER is 50 EMBER, at the
+        // pool's own ratio and with no fee — a deposit is not a trade.
+        assert.equal(valueOf(screen.byRole('textbox', 'Amount of EMBER to deposit')), '50')
+        assert.deepEqual(
+          ethCalls(screen.api.wire).filter((c) => c.fn === 'getAmountsOut'),
+          [],
+          'the deposit form quoted itself through the router, per keystroke',
+        )
+        assert.match(screen.text(), /Pool tokens minted/)
+        assert.match(screen.text(), /You deposit at least/)
+      },
+      wallet(),
+    )
+  })
+
+  it('reads the FEE SWITCH off the factory rather than claiming it in prose', async () => {
+    await page(funded({ feeTo: FEE_SETTER }), ADD, async (screen) => {
+      assert.match(screen.text(), /ON — part of the fee goes elsewhere/)
+    })
+    await page(funded(), ADD, async (screen) => {
+      assert.match(screen.text(), /off — the whole 0\.3% stays in the pool/)
+    })
+  })
+
+  it('SAYS THE FIRST DEPOSIT SETS THE PRICE, and prints the price it would set', async () => {
+    // The one place on this surface where a typo costs a large fraction of what was put in, and the
+    // one the issue calls out by name. An empty pool has no ratio to conform to, so the ratio
+    // deposited becomes the price and nothing anywhere puts it back.
+    const empty = market(WEMBER, 0n, NEFELI, 0n)
+    await page(
+      chain({ pairs: [empty], native: { [HOLDER]: 100n * 10n ** 18n } }),
+      `/pools/${empty.address}/add`,
+      async (screen) => {
+        assert.match(screen.text(), /This is the first deposit/)
+        assert.match(screen.text(), /the ratio you deposit becomes its price/)
+        assert.match(screen.text(), /the first person to trade takes the difference out of your/)
+        assert.ok(screen.queryByRole('alert', /This is the first deposit/) !== null)
+
+        await screen.type(screen.byRole('textbox', 'Amount of NEFELI to deposit'), '1000')
+        await screen.settle()
+        // AND THE OTHER SIDE STAYS EMPTY. On an empty pool the two amounts are independent by
+        // definition — that is what "you are setting the price" means — so a page that auto-filled
+        // one from the other would be inventing the ratio it is warning about.
+        assert.equal(valueOf(screen.byRole('textbox', 'Amount of EMBER to deposit')), '')
+
+        await screen.type(screen.byRole('textbox', 'Amount of EMBER to deposit'), '5')
+        await screen.settle()
+        assert.match(screen.text(), /At the amounts above the price would be/)
+        assert.match(screen.text(), /0\.005 EMBER per NEFELI/)
+      },
+      wallet(),
+    )
+  })
+
+  it('hands the wallet ONE transaction, to the router, with the native side as `value`', async () => {
+    const stub = wallet()
+    await page(
+      funded(),
+      ADD,
+      async (screen) => {
+        await depositNefeli(screen)
+
+        assert.equal(stub.sent.length, 1, 'a deposit is one signature when the allowance is there')
+        const [tx] = stub.sent
+        assert.equal(tx?.to.toLowerCase(), HEARTH.router.toLowerCase())
+        assert.equal(tx?.from.toLowerCase(), HOLDER)
+        // The EMBER side rides as `value`, not as an argument. Sending it as both is how a deposit
+        // takes twice what the reader asked it to; `test/wallet.test.ts` asserts the word list.
+        assert.equal(BigInt(tx?.value ?? '0x0'), 50n * 10n ** 18n)
+
+        // And it is remembered. The state this whole mechanism exists for is the one AFTER the
+        // wallet returns a hash, which the shape this replaced could not say anything about.
+        assert.match(screen.text(), /sent, waiting for a block/)
+        assert.ok(screen.queryByRole('region', 'Transactions this page sent') !== null)
+        // The form is cleared, so the same deposit cannot be sent twice by a second click.
+        assert.equal(valueOf(screen.byRole('textbox', 'Amount of NEFELI to deposit')), '')
+      },
+      stub,
+    )
+  })
+
+  it('ASKS FOR THE ALLOWANCE FIRST, and sends it to the token rather than to the router', async () => {
+    // Two transactions, and the first one goes somewhere else. An approval sent to the router is
+    // the mistake that looks like it worked — the router is not the ledger that records it.
+    const stub = wallet()
+    await page(
+      funded({ allowances: {} }),
+      ADD,
+      async (screen) => {
+        await screen.type(screen.byRole('textbox', 'Amount of NEFELI to deposit'), '9900')
+        await screen.settle()
+        const button = screen.byRole('button', /Allow the router to move this NEFELI/)
+        await screen.click(button)
+        await screen.settle()
+
+        assert.equal(stub.sent.length, 1)
+        assert.equal(stub.sent[0]?.to.toLowerCase(), NEFELI.address.toLowerCase())
+        assert.notEqual(stub.sent[0]?.to.toLowerCase(), HEARTH.router.toLowerCase())
+        assert.equal(BigInt(stub.sent[0]?.value ?? '0x1'), 0n)
+        assert.match(screen.text(), /Approval/)
+      },
+      stub,
+    )
+  })
+
+  it('CALLS A MINED-AND-REVERTED DEPOSIT REVERTED, in an alert, not "sent"', async () => {
+    // The defect the issue names. Gas was spent, the hash is real, nothing moved — and the shape
+    // every DEX frontend ships says "sent ✓" and then goes quiet.
+    const stub = wallet()
+    await page(
+      funded({ mined: { [WALLET_TX_HASH]: { reverted: true } } }),
+      ADD,
+      async (screen) => {
+        await depositNefeli(screen)
+        await screen.settle()
+        assert.match(screen.text(), /was mined and reverted — the gas was spent and nothing moved/)
+        assert.match(screen.text(), /the price passed the minimum you set, or the deadline expired/)
+        assert.ok(screen.queryByRole('alert', /was mined and reverted/) !== null)
+        assert.doesNotMatch(screen.text(), /sent, waiting for a block/)
+      },
+      stub,
+    )
+  })
+
+  it('KEEPS THE CONFIRMATION WHEN THE POOL IS RE-READ, and names the block', async () => {
+    // This test failed when it was written, and the defect it found is the one the issue is about.
+    // A settled transaction reloads the pool — that is what `onSettled` is for, so the reserves and
+    // the balances stop being pre-deposit numbers. But `useResource` re-enters `loading` on a
+    // reload, and a guard on the resource's STATE unmounted the entire form at that instant: the
+    // page went back to "enter both amounts" with no record anywhere that the deposit had happened.
+    // The confirmation was destroyed by the act of confirming it.
+    const stub = wallet()
+    await page(
+      funded({ mined: { [WALLET_TX_HASH]: { blockNumber: 41_209 } } }),
+      ADD,
+      async (screen) => {
+        await depositNefeli(screen)
+        await screen.settle()
+        assert.match(screen.text(), /confirmed in block 41209/)
+        assert.ok(screen.queryByRole('region', 'Transactions this page sent') !== null)
+        // And the form is still a form, rather than a spinner or a re-mounted blank one.
+        assert.ok(screen.queryByRole('region', 'Add liquidity') !== null)
+        assert.match(screen.text(), /Pool holds now/)
+      },
+      stub,
+    )
+  })
+
+  it('DOES NOT PROMPT ON MOUNT, and offers the network before it offers the button', async () => {
+    // `eth_accounts` opens nothing; `eth_requestAccounts` is the one that puts a dialogue in front
+    // of somebody who has read nothing yet. And a wallet on another chain would sign a transaction
+    // to the router's address OVER THERE, where there is either no code or somebody else's.
+    const stub = wallet({ chainId: OTHER_CHAIN_ID })
+    await page(
+      funded(),
+      ADD,
+      async (screen) => {
+        assert.ok(stub.asked.includes('eth_accounts'))
+        assert.ok(
+          !stub.asked.includes('eth_requestAccounts'),
+          `the page prompted the wallet on mount: ${stub.asked.join(', ')}`,
+        )
+        assert.ok(screen.queryByRole('button', 'Switch your wallet to Hearth') !== null)
+        assert.equal(screen.queryByRole('button', /^Add liquidity$/), null)
+      },
+      stub,
+    )
+  })
+
+  it('treats declining as a decision: no banner, no entry, nothing tracked', async () => {
+    const stub = wallet({ rejects: true })
+    await page(
+      funded(),
+      ADD,
+      async (screen) => {
+        await depositNefeli(screen)
+        assert.equal(stub.sent.length, 0)
+        assert.equal(screen.queryByRole('region', 'Transactions this page sent'), null)
+        assert.doesNotMatch(screen.text(), /User rejected/)
+        // The amounts are still there, because nothing happened and the reader may press again.
+        assert.equal(valueOf(screen.byRole('textbox', 'Amount of NEFELI to deposit')), '9900')
+      },
+      stub,
+    )
+  })
+
+  it('shows every number to a reader with no wallet, and says only that nothing can be signed', async () => {
+    await page(chain(), ADD, async (screen) => {
+      assertMounted(screen)
+      assert.match(screen.text(), /No wallet is installed in this browser/)
+      assert.match(screen.text(), /Every number on this page is still real/)
+      assert.match(screen.text(), /Pool holds now/)
+      assert.match(screen.text(), /Before you press it/)
+      assert.equal(screen.queryByRole('button', 'Connect a wallet'), null)
+    })
+  })
+})
+
+describe('your positions', () => {
+  const twoPools = (options: Parameters<typeof chain>[0] = {}): ChainFixture =>
+    chain({ pairs: [SUPPLIED, EMBER_SILT], ...options })
+
+  it('sweeps every pool on the chain and prints what each share is worth NOW', async () => {
+    // There is no positions table on a constant-product AMM: a position is a balance of a pair's
+    // own ERC-20 and nothing else. The sweep is the only honest answer to "what do I have".
+    const fixture = twoPools({ balances: { [holding(SUPPLIED.address, HOLDER)]: LP } })
+    await page(
+      fixture,
+      '/pools/positions',
+      async (screen) => {
+        assertMounted(screen)
+        assert.match(screen.text(), /1 position, across every pool on this chain/)
+        assert.match(screen.text(), /10\.0%/)
+        // A tenth of 4,950,000 NEFELI and of 25,000 WEMBER — the reserves, not the deposit.
+        assert.match(screen.text(), /495,000/)
+        assert.match(screen.text(), /2,500/)
+        assert.match(screen.text(), /is not what was deposited/)
+        assert.ok(screen.queryByRole('link', 'Add') !== null)
+        assert.ok(screen.queryByRole('link', 'Remove') !== null)
+      },
+      wallet(),
+    )
+  })
+
+  it('says "none" and how many pools that was checked against, rather than going quiet', async () => {
+    await page(
+      twoPools(),
+      '/pools/positions',
+      async (screen) => {
+        assert.match(screen.text(), /You do not hold a share of any pool on this chain/)
+        assert.match(screen.text(), /Checked 2 of 2 pools/)
+        assert.match(screen.text(), /Nothing is wrong/)
+      },
+      wallet(),
+    )
+  })
+
+  it('READS NOTHING AT ALL without a wallet, and is not a sign-in wall', async () => {
+    // The address comes from the reader's own wallet or from nowhere. No CloudsForge account is
+    // involved at any point, nothing is stored, and there is no address to look balances up for —
+    // so the page asks the chain for nothing rather than sweeping the factory for the zero address.
+    const fixture = twoPools()
+    await page(fixture, '/pools/positions', async (screen) => {
+      assertMounted(screen)
+      assert.match(screen.text(), /No wallet is connected/)
+      assert.match(screen.text(), /There is no wallet in this browser to read an address from/)
+      assert.match(screen.text(), /it never asks it to sign anything/)
+      assert.deepEqual(
+        ethCalls(screen.api.wire),
+        [],
+        'the positions page read the chain with nobody to read it for',
+      )
+    })
+  })
+
+  it('reports a factory that would not answer as a FAILURE, not as an empty position list', async () => {
+    const broken = twoPools({ refuses: ['eth_call'] })
+    const stub = wallet()
+    await withScreen(
+      app(),
+      {
+        url: `${AT}/pools/positions`,
+        routes: broken.routes,
+        windowExtras: { ethereum: stub.provider },
+      },
+      async (screen) => {
+        await screen.settle()
+        assert.match(screen.text(), /The factory did not answer/)
+        assert.match(screen.text(), /Nothing was sent and nothing was signed/)
+        assert.doesNotMatch(screen.text(), /You do not hold a share of any pool/)
+      },
+    )
+  })
+})
+
+describe('removing liquidity', () => {
+  const withPosition = (options: Parameters<typeof chain>[0] = {}): ChainFixture =>
+    chain({
+      pairs: [SUPPLIED],
+      balances: { [holding(SUPPLIED.address, HOLDER)]: LP },
+      allowances: { [holding(SUPPLIED.address, HOLDER)]: LP },
+      ...options,
+    })
+
+  it('shows BOTH amounts that come out, and never one number for the pair', async () => {
+    // A single "value" would need a price for both tokens in some third unit, and this surface has
+    // no oracle and no business inventing one.
+    await page(
+      withPosition(),
+      REMOVE,
+      async (screen) => {
+        assertMounted(screen)
+        assert.match(screen.text(), /Your pool tokens/)
+        assert.match(screen.text(), /10,000/)
+        assert.match(screen.text(), /10\.0%/)
+        // The default portion is 25%: a quarter of a tenth of the pool.
+        assert.match(screen.text(), /123,750/)
+        assert.match(screen.text(), /625/)
+        assert.match(screen.text(), /which is not the ratio you put in/)
+      },
+      wallet(),
+    )
+  })
+
+  it('BURNS THE WHOLE BALANCE at 100%, rather than a rounded fraction of it', async () => {
+    await page(
+      withPosition(),
+      REMOVE,
+      async (screen) => {
+        await screen.click(screen.byRole('radio', '100%'))
+        await screen.settle()
+        assert.match(screen.text(), /495,000/)
+        assert.match(screen.text(), /2,500/)
+      },
+      wallet(),
+    )
+  })
+
+  it('approves THE POOL ITSELF, which is the one approval nobody recognises', async () => {
+    const stub = wallet()
+    await page(
+      withPosition({ allowances: {} }),
+      REMOVE,
+      async (screen) => {
+        await screen.click(screen.byRole('button', /Allow the router to burn your pool tokens/))
+        await screen.settle()
+        assert.equal(stub.sent.length, 1)
+        assert.equal(stub.sent[0]?.to.toLowerCase(), SUPPLIED.address.toLowerCase())
+        assert.match(screen.text(), /A pair is an ERC-20 and the router has to be allowed/)
+      },
+      stub,
+    )
+  })
+
+  it('TAKES THE EMBER SIDE AS EMBER, and takes a different path when that is cleared', async () => {
+    // `removeLiquidity` returns WEMBER and `removeLiquidityETH` returns the coin. Which one arrives
+    // is not something to discover afterwards, so the choice is a visible control — and the two
+    // choices must reach two different entry points, which is what the selectors below say.
+    const stub = wallet()
+    await page(
+      withPosition(),
+      REMOVE,
+      async (screen) => {
+        assert.match(screen.text(), /Take the EMBER side as EMBER/)
+        await screen.click(screen.byRole('button', /^Remove liquidity$/))
+        await screen.settle()
+
+        await screen.click(screen.byRole('checkbox', /Take the EMBER side as EMBER/))
+        await screen.settle()
+        assert.match(screen.text(), /WEMBER/)
+        await screen.click(screen.byRole('button', /^Remove liquidity$/))
+        await screen.settle()
+
+        assert.equal(stub.sent.length, 2)
+        assert.equal(stub.sent[0]?.to.toLowerCase(), HEARTH.router.toLowerCase())
+        assert.equal(stub.sent[1]?.to.toLowerCase(), HEARTH.router.toLowerCase())
+        assert.notEqual(
+          stub.sent[0]?.data.slice(0, 10),
+          stub.sent[1]?.data.slice(0, 10),
+          'unwrapping and not unwrapping went to the same router function',
+        )
+        // Nothing is sent as value on a withdrawal in either shape: the coins come OUT.
+        assert.equal(BigInt(stub.sent[0]?.value ?? '0x1'), 0n)
+        assert.equal(BigInt(stub.sent[1]?.value ?? '0x1'), 0n)
+      },
+      stub,
+    )
+  })
+
+  it('says there is nothing of yours here, rather than offering a withdrawal of zero', async () => {
+    await page(
+      withPosition({ balances: {} }),
+      REMOVE,
+      async (screen) => {
+        assert.match(screen.text(), /You hold none of this pool/)
+        assert.match(screen.text(), /There is nothing of yours in this pool to withdraw/)
+        assert.equal(screen.queryByRole('button', /^Remove liquidity$/), null)
+      },
+      wallet(),
+    )
+  })
+})
+
+describe('creating a market', () => {
+  const both = (options: Parameters<typeof chain>[0] = {}): ChainFixture =>
+    chain({ pairs: [EMBER_NEFELI, EMBER_SILT], ...options })
+
+  it('OFFERS A REAL BUTTON, because the deployed factory checks no caller', async () => {
+    // Verified against the deployed factories on 7411 and 7412 rather than read off the source:
+    // `createPair` `eth_call`ed from an address with no relationship to this project answered with
+    // a pair address on both. A button that always failed would be worse than no button.
+    const stub = wallet()
+    await page(
+      both(),
+      '/pools/new',
+      async (screen) => {
+        assertMounted(screen)
+        await screen.type(screen.byRole('textbox', 'First token address'), NEFELI.address)
+        await screen.settle()
+        await screen.type(screen.byRole('textbox', 'Second token address'), SILT.address)
+        await screen.settle()
+
+        // The address it would have, derived by CREATE2 in this browser — known before the
+        // transaction is sent, which is what makes the link to the deposit page honest.
+        const derived = pairFor(HEARTH, NEFELI.address, SILT.address)
+        assert.match(screen.text(), new RegExp(derived.slice(2, 12), 'i'))
+        assert.match(screen.text(), /Anybody\. There is no allowlist, no fee and no owner check/)
+        assert.match(screen.text(), /verified against the deployed factory on both Hearth chains/)
+        // And what it would hold, which is the part somebody about to spend gas has to hear.
+        assert.match(screen.text(), /Nothing\. A new pair has no reserves/)
+
+        await screen.click(screen.byRole('button', 'Create this market'))
+        await screen.settle()
+        assert.equal(stub.sent.length, 1)
+        assert.equal(stub.sent[0]?.to.toLowerCase(), HEARTH.factory.toLowerCase())
+        assert.equal(BigInt(stub.sent[0]?.value ?? '0x1'), 0n)
+        assert.match(screen.text(), /New pool/)
+      },
+      stub,
+    )
+  })
+
+  it('LINKS TO THE MARKET THAT ALREADY EXISTS instead of offering a call that reverts', async () => {
+    // `PAIR_EXISTS` is the one refusal of the three that cannot be seen from the two addresses
+    // alone, so it is read from the factory before the button is drawn.
+    await page(
+      both(),
+      '/pools/new',
+      async (screen) => {
+        await screen.type(screen.byRole('textbox', 'First token address'), NEFELI.address)
+        await screen.settle()
+        await screen.type(screen.byRole('textbox', 'Second token address'), WEMBER.address)
+        await screen.settle()
+        assert.match(screen.text(), /This market already exists/)
+        assert.match(screen.text(), /The factory would refuse a second one/)
+        assert.equal(screen.queryByRole('button', 'Create this market'), null)
+      },
+      wallet(),
+    )
+  })
+
+  it('refuses the same token twice and the zero address, before any gas', async () => {
+    // `withScreen` rather than `page`: the zero address has no contract behind it, so the token
+    // read against it is a read that fails — which is the subject here, and would land in
+    // `unmodelled` as the fixture's honest report that nothing is deployed there.
+    const stub = wallet()
+    const options = {
+      url: `${AT}/pools/new`,
+      routes: both().routes,
+      windowExtras: { ethereum: stub.provider },
+    }
+    await withScreen(app(), options, async (screen) => {
+      await screen.settle()
+      await screen.type(screen.byRole('textbox', 'First token address'), NEFELI.address)
+      await screen.type(screen.byRole('textbox', 'Second token address'), NEFELI.address)
+      await screen.settle()
+      assert.match(screen.text(), /A pool holds two different tokens/)
+      assert.equal(screen.queryByRole('button', 'Create this market'), null)
+
+      await screen.type(
+        screen.byRole('textbox', 'Second token address'),
+        '0x0000000000000000000000000000000000000000',
+      )
+      await screen.settle()
+      assert.match(screen.text(), /The zero address is not a token/)
+      assert.equal(screen.queryByRole('button', 'Create this market'), null)
+      assert.equal(stub.sent.length, 0)
+    })
+  })
+})
+
 describe('the contracts page', () => {
   it('runs every check against the chain and prints both sides of each', async () => {
     await page(chain(), '/contracts', async (screen) => {
@@ -668,7 +1227,17 @@ describe('the shell', () => {
 
   it('mounts every route without a console error', async () => {
     const fixture = chain()
-    for (const path of ['/', '/pools', `/pools/${EMBER_NEFELI.address}`, '/receipts', '/contracts']) {
+    for (const path of [
+      '/',
+      '/pools',
+      `/pools/${EMBER_NEFELI.address}`,
+      `/pools/${EMBER_NEFELI.address}/add`,
+      `/pools/${EMBER_NEFELI.address}/remove`,
+      '/pools/positions',
+      '/pools/new',
+      '/receipts',
+      '/contracts',
+    ]) {
       const screen = await mount(app(), { url: `${AT}${path}`, routes: fixture.routes })
       try {
         await screen.settle()

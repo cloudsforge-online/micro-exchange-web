@@ -30,7 +30,7 @@ import { formatPrice, formatUnits } from '../lib/format.ts'
 import { explorerAddressUrl, hosts } from '../lib/hosts.ts'
 import { readPair } from '../lib/market.ts'
 import { useResource } from '../lib/resource.ts'
-import { swapPath } from '../lib/routes.ts'
+import { addLiquidityPath, removeLiquidityPath, swapPath } from '../lib/routes.ts'
 
 export function PoolPage() {
   const chain = useChain()
@@ -234,12 +234,25 @@ function PoolDetail({
             )}
           </p>
 
+          {/*
+            Three actions, and the order is the order of how many people want each. Trading is what
+            most readers came for; supplying is a longer commitment and sits second; withdrawing is
+            only meaningful to somebody who already supplied, and `pools/positions` is where that
+            reader arrives from. None of the three is gated — each page renders in full without a
+            wallet and says at its own button what signing would need.
+          */}
           <p className="xc-panel__actions">
             <Link
               className="cf-btn cf-btn--ember"
               to={swapPath(pool.token0.address, pool.token1.address)}
             >
               Swap this pair
+            </Link>
+            <Link className="cf-btn" to={addLiquidityPath(pool.address)}>
+              Add liquidity
+            </Link>
+            <Link className="cf-btn" to={removeLiquidityPath(pool.address)}>
+              Remove liquidity
             </Link>
           </p>
         </section>

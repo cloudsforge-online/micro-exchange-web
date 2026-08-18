@@ -8,9 +8,9 @@
 ![tests](https://img.shields.io/badge/tests-in--process%20DOM-6E56CF)
 
 The public front for Forge Exchange: swap one token for another against a constant-product pool on
-Hearth, see every market the factory has made, and re-run the checks that say the contracts are what
-they claim to be. It is a static SPA served by nginx — no Node, no toolchain and no environment in
-the image.
+Hearth, put liquidity into a pool and take it back out, create a market the factory has never seen,
+see every market it has made, and re-run the checks that say the contracts are what they claim to
+be. It is a static SPA served by nginx — no Node, no toolchain and no environment in the image.
 
 > ## **Nothing here is custodied, and there is no service behind this page.**
 >
@@ -31,23 +31,34 @@ the plan this surface is phase H of.
 
 ## Routes this app serves
 
-Three, and that is the whole surface.
+Four top-level, and every page the write half added is a **child of `pools`**.
 
-| Path             | What it is                                                                    |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `/`              | The swap form: a pair, an amount, the router's quote, and the curve it sits on |
-| `/pools`         | Every pair the factory reports, with reserves, newest first                    |
-| `/pools/<pair>`  | One market: its two tokens, its reserves, and whether it is the canonical pair |
-| `/contracts`     | The addresses, and the checks — re-run in the reader's browser                 |
+| Path                   | What it is                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `/`                    | The swap form: a pair, an amount, the router's quote, and the curve it sits on  |
+| `/pools`               | Every pair the factory reports, with reserves, newest first                     |
+| `/pools/<pair>`        | One market: its two tokens, its reserves, and whether it is the canonical pair  |
+| `/pools/<pair>/add`    | Put both sides in — or open an empty pool, at a price you are choosing for it   |
+| `/pools/<pair>/remove` | Take them back out, with both amounts quoted from reserves before you sign      |
+| `/pools/positions`     | What the connected wallet holds, swept from the factory's own list of pairs     |
+| `/pools/new`           | Create a market. The factory is permissionless — verified, not assumed          |
+| `/receipts`            | The Forge Receipts: whose promise, what is behind it, and how to count it yourself |
+| `/contracts`           | The addresses, and the checks — re-run in the reader's browser                  |
 
 `ROUTES` in `src/lib/routes.ts` is the single table. The `<Route>` elements in `src/app.tsx` and the
 `location` blocks in `nginx.conf` are checked against it as text by `test/routes.test.ts`, because
-three hand-maintained lists that must agree is two lists too many to trust.
+three hand-maintained lists that must agree is two lists too many to trust. The cross-check compares
+**first segments**, which is what lets the four liquidity pages exist without a fourth list to
+maintain: `pools` is already `wildcard: true`, so the router mounts them and nginx already serves
+them.
 
-There is deliberately **no "add liquidity" page and no positions page.** Both need write paths this
-surface has not built, and a menu entry leading to an explanation of why a feature is missing is
-worse than the absence: it implies somebody decided against it, rather than that phase H scoped this
-to a swap, a list and a proof.
+They are children rather than a fifth navigation entry because that is what they are *about*.
+Somebody looking for their own liquidity is looking at the market list; a top-level "Liquidity" tab
+beside "Pools" would be two names for one subject, and the reader would have to learn which of the
+two holds the page they want. `positions` and `new` cannot be mistaken for a pair address — a pair
+segment is twenty bytes of hex and `PoolPage` rejects anything that is not — and both are declared
+before `:pair` in `app.tsx` so the ordering is visible rather than resting on react-router's
+ranking rule.
 
 ### Everything unknown is a real 404
 
@@ -77,9 +88,11 @@ reads are:
 | `allPairsLength()`, `allPairs(i)`, `getPair(a,b)`    | the factory                     |
 | `getReserves()`, `token0()`, `token1()`, `totalSupply()` | the pair                    |
 | `name()`, `symbol()`, `decimals()`                   | each ERC-20                     |
+| `balanceOf(owner)`, `allowance(owner, router)`       | each ERC-20, **and the pair**   |
 | `getAmountsOut(path)`                                | the router — **the quote**      |
 | `pairCodeHash()`, `feeTo()`, `feeToSetter()`         | the factory — the two traps     |
-| `eth_chainId`, `eth_blockNumber`                     | the node                        |
+| `eth_chainId`, `eth_blockNumber`, `eth_getBalance`   | the node                        |
+| `eth_getTransactionReceipt`                          | the node — did it work          |
 
 No cache, no store, no subscription. A quote is worth what it was worth at the block it was read
 at, so `src/lib/market.ts` re-reads on every render that needs a number and every page prints the
@@ -134,16 +147,26 @@ with no binding, so there is nothing to accidentally log.
 
 ## The deployment is keyed by chain id
 
-`DEPLOYMENTS` in `src/lib/dex.ts` is a frozen table with one row today:
+`DEPLOYMENTS` in `src/lib/dex.ts` is a frozen table with two rows:
 
-| | |
-| --- | --- |
-| chain | **7411** — Hearth, native symbol `EMBER` |
-| factory | `0x8e41e083cd664a5d65d047198338e5f110ee883f` |
-| router | `0x74a991fedb2e09aa23faffa9bdf4ca5dbbeb0527` |
-| wrapped native | `0xdae7f901bc0ea6cb8a77c160e355007981e351e1` |
-| init code hash | `0x46b4122ae9db4a03c913cfbed4e6321064741545c60aafe3ed9410be7657a537` |
-| multicall | `0xe1636b08ff1edde24b2642a3cb388d4e97dfe0bc` |
+| | **7411** — Hearth | **7412** — Hearth Testnet |
+| --- | --- | --- |
+| factory | `0x8e41e083cd664a5d65d047198338e5f110ee883f` | `0x18bbd09d51f4e9e630dd0a86fc984b6326f10e41` |
+| router | `0x74a991fedb2e09aa23faffa9bdf4ca5dbbeb0527` | `0xba2b9db822e1f2ec3039fe474644b8405268a9b4` |
+| wrapped native | `0xdae7f901bc0ea6cb8a77c160e355007981e351e1` | `0xa26dfebc362a380e1ade6090c7c5887180d1b263` |
+| init code hash | `0x46b4122a…7657a537` | the same constant, and it has to be |
+| multicall | `0xe1636b08ff1edde24b2642a3cb388d4e97dfe0bc` | `0x76db8cdcaf4a517a51ae474bd00cfe9a53635c03` |
+
+Both rows were **re-read from the node** before being written down, not copied out of a deployment
+note: `router.factory()`, `router.WETH()`, `allPairsLength()` and `multicall3.getChainId()` all
+answer as above, and on each chain the one live pair recomputed by CREATE2 from the constant equals
+`factory.allPairs(0)` exactly. The block numbers in that table were found by bisecting
+`eth_getCode`, so each is the block an address first had code in rather than the block a script
+logged.
+
+The two deployments are **not** the same bytecode — 7412 predates the factory and multisig fixes
+from §6 phase E — but `initCodeHash` is identical and has to be: the pair contract did not change,
+and `bytecodeHash: 'none'` means editing the factory cannot perturb it.
 
 **A chain id, not a hostname and not an environment variable.** A hostname can be re-pointed and a
 variable can be stale, and both failures render the same way: a working-looking swap form aimed at a
@@ -157,8 +180,13 @@ answer for itself. Here it is. One artefact, promoted unchanged, whose behaviour
 without an exchange is decided by the chain rather than by a variable somebody has to remember to
 set. CI asserts `/deployment.json` answers 404.
 
-**There is no testnet row, and the table is frozen.** Testnet renders the not-deployed state and
-says so plainly, which is the correct answer until phase G puts contracts there.
+**The table has to be exactly as long as the truth is, in both directions.** A row for a chain with
+no deployment renders a swap form against contracts that are not there and every quote on it fails.
+A missing row for a chain that *does* have one tells a reader "Forge Exchange is not deployed on
+this network" about a market they can see on the explorer — the same lie with the sign flipped, and
+it is the one this file shipped with: the testnet row was absent for four days after phase D had
+already deployed the full set on 7412. It is present now because it was read off the node, and a
+third chain gets a row on the same terms and no others.
 
 ## The two traps
 
@@ -211,10 +239,16 @@ for free behind a session would be theatre; the `rules` job fails the build on `
 `RequireAuth`, `AuthProvider` or `Authorization` appearing anywhere in `src/`.
 
 Writing needs a wallet, and only a wallet. `src/lib/wallet.ts` speaks EIP-1193 directly — no
-WalletConnect, no wagmi, no viem — and builds three transactions: `approve`, `swapExactTokensFor*`
-and the native `deposit()` wrap. It never asks for accounts on load; `eth_requestAccounts` happens
-when somebody presses Connect, because a page that opens a wallet prompt before being asked has
-taught the reader to dismiss prompts.
+WalletConnect, no wagmi, no viem — and builds six transactions: `approve`, `swapExactTokensFor*`,
+the native `deposit()` wrap, `addLiquidity`/`addLiquidityETH`, `removeLiquidity*` and
+`createPair`. It never asks for accounts on load; `eth_requestAccounts` happens when somebody
+presses Connect, because a page that opens a wallet prompt before being asked has taught the reader
+to dismiss prompts.
+
+**Every one of those six is calldata handed to a wallet this estate did not issue.** Nothing in this
+repository holds a key, and there is no route that could: no backend exists to hold one. The write
+pages fail closed on that — with no injected provider they still render every number, and the button
+says what is missing instead of pretending.
 
 `bootstrapSession()` is absent from `src/main.tsx` for the reason the whole surface exists: a
 CloudsForge session is not a credential any chain node has heard of, and a "Sign in" affordance
@@ -226,6 +260,59 @@ argument rather than a gap: `surface('exchange')` resolves perfectly well (the f
 from the same registry). The bar's account control has nothing behind it here. What the absence must
 **not** take with it is the network switcher, which is mounted directly and asserted, so this does
 not become the one surface in the estate that cannot be read on the other network.
+
+## The write half: liquidity, and the five ways it costs money
+
+Swapping is one signature against a price you can see. Providing liquidity is not, and the four
+pages under `/pools` are shaped around the five things that cost money quietly.
+
+**A pending transaction is a state.** `src/lib/tx.ts` keeps every hash this page broadcast until the
+chain answers, in four states: `pending`, `mined`, `reverted`, and `lost` — the last meaning *this
+page stopped asking*, which is a fact about the page and not a verdict on the transaction. The shape
+it replaces is on every exchange frontend and was on this one: send, print "sent", never mention it
+again. That cannot say the sentence that matters most — **mined and reverted**, where gas was spent,
+the hash is real, the explorer link works, and nothing moved. Receipts are polled through
+`lib/rpc.ts`, the same public endpoint every other number came from, rather than through the
+injected provider, so a wallet pointed at a different node cannot produce a receipt that disagrees
+with the reserves printed beside it. Nothing is persisted: the authority on what happened is the
+chain, and a list of transaction hashes written to disk by a page nobody asked to keep them is a
+privacy decision made on somebody's behalf.
+
+**The first deposit into an empty pool sets the price, and nothing puts it back.** Supplying to a
+pool that has reserves is bounded — the ratio is fixed by the pool and the router will not let a
+deposit move it. A *first* deposit has no ratio to conform to, so whatever is deposited becomes the
+price, and an arbitrageur takes the difference out of the depositor on the first trade. It is the
+one place on this surface where a typo costs a large fraction of the stake, so `/pools/<pair>/add`
+detects the empty pool, unlocks the two sides from each other, prints the price the deposit is about
+to declare, and says so in `FIRST_DEPOSIT_WARNING` at the moment of signing rather than in a note
+somewhere above.
+
+**Approvals are separate transactions, and they do not all go to the same place.** Depositing
+approves the **router** on each non-native token; withdrawing approves the router on the **pair**,
+which is itself an ERC-20 and is the contract people get wrong. Both approve the exact amount rather
+than an unlimited allowance. `test/render.test.ts` asserts the `to` of each, because an approval
+sent to the wrong contract succeeds, costs gas, and changes nothing.
+
+**Price impact and slippage tolerance are different things and are never merged.** Impact is what
+*your* trade does to the price and is certain; tolerance is a preference about what everybody else's
+trades may do before you would rather revert. `src/components/limits.tsx` carries the tolerance and
+the deadline for every write page, so the same control means the same thing on all four.
+
+**Creating a market is permissionless, and that was checked rather than assumed.** `createPair` on
+the deployed factory has no `msg.sender` check on either chain — `eth_call` from an unrelated
+address returns an address on 7411 and on 7412 — so `/pools/new` renders a real button and says
+"there is no allowlist, no fee and no owner check on this call". Only `setFeeTo` and
+`setFeeToSetter` are gated, by the `feeToSetter` multisig `/contracts` prints. The three refusals
+that *do* exist are pre-checked before any gas: identical addresses, the zero address, and
+`PAIR_EXISTS` — and the last one links to the market that already exists rather than offering a
+call that would revert. The page also says the thing that makes most visits unnecessary: depositing
+into a pair that does not exist creates it in the same transaction, which is one signature instead
+of two.
+
+`LIQUIDITY_TERMS` in `src/lib/format.ts` is the list a reader sees before the first deposit, written
+for the moment *before* the gas is spent. The protocol-fee item deliberately does not say "there is
+no protocol fee": `feeTo()` is read live off the factory on the page beside it, because a claim in
+prose about a value a multisig can change at any moment is a claim that goes stale silently.
 
 ## Configuration
 
@@ -282,6 +369,10 @@ resolves.
 - **The factory answered, and has nothing** → "The factory has not created a market yet."
 - **The factory did not answer** → "The factory did not answer", with a *Read again* button.
 - **A pair with no reserves** → no price at all. `null` is not zero, and a zero price is a lie with a number in it.
+- **No wallet, on a write page** → every number still renders and the button names what is missing.
+  A page that hides a public reserve until you connect is asking for a permission it does not need.
+- **A wallet holding nothing here** → "you hold none of this pool", *after* the sweep has said how
+  many pools it checked. "No positions" from a read that gave up halfway is the same sentence.
 
 The pair list is bounded at 50 and the bound is **reported**: `/pools` prints the factory's own
 count beside the number of rows, because a truncation nobody mentions reads as "that is all there
@@ -318,8 +409,9 @@ words on a page in about a second.
 
 | File | What it would catch |
 | --- | --- |
-| `render.test.ts` | Every route rendered against a stubbed chain, and the words read. The custody sentence, the not-deployed state, the "anyone may create one" line on a missing pool, the impostor warning. |
-| `dex.test.ts` | The ported arithmetic against the reference formulae and their invariants. |
+| `render.test.ts` | Every route rendered against a stubbed chain, and the words read. The custody sentence, the not-deployed state, the "anyone may create one" line on a missing pool, the impostor warning. The four liquidity pages against a stubbed **wallet**: what was signed, what it was sent to, and that a settled deposit does not take its own confirmation off the screen. |
+| `wallet.test.ts` | The calldata itself — selector, argument order, the native side arriving as `value` and not as an argument, the deadline being seconds and in the future, and an approval addressed to the token rather than to the router. |
+| `dex.test.ts` | The ported arithmetic against the reference formulae and their invariants, including the first-deposit mint, the pro-rata burn, and that 100% of a balance is the balance bit for bit. |
 | `routes.test.ts` | `ROUTES` ↔ `app.tsx` ↔ `nginx.conf` drifting apart. |
 | `no-build-time-config.test.ts` | A `VITE_` variable or a literal hostname reaching `src/`. |
 | `seo.test.ts` | The description meta drifting from `SURFACE_DESCRIPTION`; the environment alternation in `nginx.conf` drifting from `ENV_LABELS`. |
@@ -335,14 +427,30 @@ cross-check.
 
 ## Known gaps
 
-- **No liquidity provision.** You cannot add or remove liquidity from this surface, or see a
-  position. Phase H scoped this to a swap, a list and a proof; `docs/ecosystem/39` §6 is where the
-  next phase is argued, not here.
+- **No browser test loads this bundle.** `test/render.test.ts` drives the liquidity pages against a
+  stubbed provider in `happy-dom`, and `wallet-extension/test/e2e/exchange.test.ts` drives seven
+  real transactions — deposit, approve, withdraw and the rest — through the **real** extension
+  against a **real** Hearth node. Neither is the same test: the extension e2e drives its own inline
+  dapp, not this bundle. Joining them is blocked on a real constraint rather than on effort:
+  `rpcUrl()` returns `null` on a local hostname by design, so a locally served bundle has no
+  endpoint, and the only ways to give it one are a build-time variable or interception — the first
+  is forbidden by `no-build-time-config.test.ts` and the `rules` job, the second by the rule that
+  there is no `page.route` in `wallet-extension/test/e2e/` and never will be. Closing it honestly
+  means serving this bundle behind a hostname the registry knows in CI, which is deploy work and
+  not this repository's.
+- **Approvals are two transactions, and there is no `permit`.** Hearth's ERC-20s are not uniformly
+  EIP-2612, and a page that tried a signature first and fell back to an approval would ask for a
+  signature that sometimes does nothing. Deliberate, and worth revisiting per token rather than in
+  general.
+- **The positions sweep is bounded at `PAIR_PAGE_LIMIT`** (50) like the pair list, for the same
+  reason and with the same report — "Checked N of M pools" — because a position missing from an
+  unbounded-looking list reads as "you have none".
+- **A reload loses the transaction list.** Nothing is persisted; the explorer link is the durable
+  record. See `src/lib/tx.ts` for why that is the trade rather than an omission.
 - **No token list, and that is partly deliberate.** The swap form takes addresses and the pool list
   comes from the factory. A curated list would be a recommendation, and an exchange whose factory is
   permissionless cannot vouch for any market on it. A *searchable* list of what the factory has made
   is a different thing and is worth building.
-- **No testnet deployment.** `DEPLOYMENTS` has one row. Testnet renders the not-deployed state.
 - **No wrapped coin against custody** — phase G in the plan, and an owner decision rather than an
   engineering one.
 - **`/pools/<address>` is absent from the sitemap**, deliberately: the set is unbounded and not this

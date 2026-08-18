@@ -451,7 +451,14 @@ jobs:
           # Every route this app owns must survive a hard refresh. `/pools/0x…` is the link somebody
           # pastes into a conversation and somebody else opens cold — and on this surface that link
           # is how a reader is pointed at a specific pool before deciding to trade against it.
-          for owned in /pools /pools/0x1111111111111111111111111111111111111111 /contracts; do
+          # The write pages are children of `pools` and are served by the SAME location block, which
+          # is the whole reason the route table did not have to grow. That is worth probing rather
+          # than reasoning about: a reader who is mid-deposit and refreshes the page must land on the
+          # deposit, and `/pools/positions` is the address a wallet-holder bookmarks.
+          for owned in /pools /pools/0x1111111111111111111111111111111111111111 \
+                       /pools/0x1111111111111111111111111111111111111111/add \
+                       /pools/0x1111111111111111111111111111111111111111/remove \
+                       /pools/positions /pools/new /receipts /contracts; do
             got=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$owned" || true)
             [ "$got" = "200" ] || { echo "::error::$owned returned $got"; fail=1; }
           done

@@ -496,6 +496,17 @@ export interface ChainOptions {
   readonly now?: number
   /** JSON-RPC methods the node refuses, for the read-did-not-come-back scenarios. */
   readonly refuses?: readonly string[]
+  /**
+   * The transactions that have receipts, keyed by lower-cased hash.
+   *
+   * ABSENCE IS PENDING, NOT MISSING. A hash this map does not name answers `null`, which is what a
+   * node says for a transaction it has not mined yet — so a scenario writes a pending transaction
+   * by not writing it here, and `unmodelled` stays empty either way. `reverted: true` is the third
+   * state: mined, gas spent, nothing moved.
+   */
+  readonly mined?: Readonly<
+    Record<string, { readonly reverted?: boolean; readonly blockNumber?: number }>
+  >
 }
 
 export interface ChainFixture {
@@ -641,6 +652,23 @@ export function chain(options: ChainOptions = {}): ChainFixture {
       if (is(data, SIG.totalSupply)) {
         return pair.totalSupply === null ? null : returns(uintWord(pair.totalSupply))
       }
+      // ── A PAIR IS ITSELF AN ERC-20, AND THAT IS THE WHOLE OF WHAT A "POSITION" IS ────────────
+      //
+      // There is no positions table on a constant-product AMM: a holding is a balance of the pair
+      // contract's own token and nothing else. So `balanceOf` and `allowance` are answered here
+      // from the same two maps the token branch uses, keyed by the PAIR's address — which is also
+      // what the withdraw form approves, and the one flow on this surface where the token being
+      // approved is the pool itself.
+      //
+      // Answered on the pair branch rather than left to fall through, because `tokens` is built
+      // from the tokens pools HOLD and a pair is not one of them; without this every LP read would
+      // land in `unmodelled` and the positions page would render "the factory did not answer".
+      if (is(data, SIG.balanceOf)) {
+        return returns(uintWord(balances[holding(at, argAddress(data, 0))] ?? 0n))
+      }
+      if (is(data, SIG.allowance)) {
+        return returns(uintWord(allowances[holding(at, argAddress(data, 0))] ?? 0n))
+      }
     }
 
     // BEFORE the token branch, and it falls through to it. A receipt IS an ERC-20, so a scenario
@@ -753,6 +781,25 @@ export function chain(options: ChainOptions = {}): ChainFixture {
           const result = ethCall(to, data)
           return result === null ? revert('execution reverted') : ok(result)
         }
+        // ── A RECEIPT IS A THIRD ANSWER, AND `null` IS THE FIRST ONE ────────────────────────────
+        //
+        // A node answers `null` for a transaction it has not mined, for one it has never seen, and
+        // for one it is about to mine. Those are the same bytes on the wire, so this fixture does
+        // not distinguish them either: a hash `mined` does not name is pending, which is exactly
+        // what `lib/tx.ts` polls through.
+        //
+        // `status` is `0x1` or `0x0`, and the second is the state this whole mechanism exists for —
+        // MINED AND REVERTED, where the gas was spent, the hash is real and nothing moved.
+        case 'eth_getTransactionReceipt': {
+          const hash = String((envelope.params ?? [])[0] ?? '').toLowerCase()
+          const mined = options.mined?.[hash]
+          if (mined === undefined) return ok(null)
+          return ok({
+            transactionHash: hash,
+            status: mined.reverted === true ? '0x0' : '0x1',
+            blockNumber: `0x${(mined.blockNumber ?? head).toString(16)}`,
+          })
+        }
         default:
           unmodelled.push(`${envelope.method} is not a method this fixture answers`)
           return revert(`the method ${envelope.method} does not exist`)
@@ -794,4 +841,102 @@ export function ethCalls(
     })
   }
   return out
+}
+
+/* ── the wallet ────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * An injected EIP-1193 provider, and the transactions it was asked to sign.
+ *
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THIS IS A STUB OF A BROWSER EXTENSION, NOT OF THE CHAIN, AND IT SIGNS NOTHING.
+ *
+ * `window.ethereum` is not a response the wire harness can answer — it is a global an extension put
+ * there — so a scenario about what this surface would ask a wallet to sign cannot be written
+ * without one. What it records is `sent`: the exact `{ from, to, data, value }` objects the pages
+ * handed over, which is the only artefact that says where somebody's money was about to go.
+ *
+ * It is NOT a substitute for the extension end-to-end test. This proves the page builds the right
+ * calldata and shows the right states around it; it cannot prove a real wallet accepts that
+ * calldata, and `wallet-extension/test/e2e/` is where that is proved against a real node with no
+ * request interception at all.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `rejects` makes the wallet decline, with EIP-1193's own 4001. Declining is a DECISION and not a
+ * failure, and the pages must not render it as an error banner — which is a scenario, and needs
+ * this switch to write it.
+ */
+/**
+ * The hash this wallet answers a send with.
+ *
+ * Exported because it is the JOIN between the two halves of a signing scenario: the wallet returns
+ * it, and `chain({ mined: { [WALLET_TX_HASH]: … } })` decides what became of it. A scenario that
+ * wrote the string twice would go green with a typo in one of them, tracking a transaction the
+ * chain was never asked about and reporting it as pending forever.
+ */
+export const WALLET_TX_HASH =
+  '0x9f2c4a7e1d8b60533f0ae94c2b7d15806af3e29c4d0b7168a2e5fc93147b0d6a'
+
+export interface WalletStub {
+  /** Hand this to `mount({ windowExtras: { ethereum: wallet } })`. */
+  readonly provider: {
+    request(args: { method: string; params?: readonly unknown[] }): Promise<unknown>
+    on(event: string, handler: (...args: unknown[]) => void): void
+    removeListener(event: string, handler: (...args: unknown[]) => void): void
+  }
+  /** Every `eth_sendTransaction` payload, in order. */
+  readonly sent: { readonly from: string; readonly to: string; readonly data: string; readonly value: string }[]
+  /** Every method asked of the wallet, in order — so a scenario can assert it did NOT prompt. */
+  readonly asked: string[]
+}
+
+export function wallet(
+  options: {
+    /** The account already granted. `null` is a wallet installed but not connected to this origin. */
+    readonly account?: string | null
+    /** The chain the WALLET is on, which is a different fact from the chain being read. */
+    readonly chainId?: number
+    /** True when every signature request is declined with 4001. */
+    readonly rejects?: boolean
+    /** The hash returned for a send. One per scenario is enough; they all get the same one. */
+    readonly hash?: string
+  } = {},
+): WalletStub {
+  const account = options.account === undefined ? HOLDER : options.account
+  const chainId = options.chainId ?? HEARTH_CHAIN_ID
+  const hash = options.hash ?? WALLET_TX_HASH
+  const sent: WalletStub['sent'] = []
+  const asked: string[] = []
+
+  const provider: WalletStub['provider'] = {
+    async request({ method, params }) {
+      asked.push(method)
+      switch (method) {
+        // `eth_accounts` is what the page asks on mount and it PROMPTS NOTHING; the difference
+        // between the two is the reason a scenario asserts on `asked`.
+        case 'eth_accounts':
+          return account === null ? [] : [account]
+        case 'eth_requestAccounts':
+          if (options.rejects === true) throw Object.assign(new Error('User rejected'), { code: 4001 })
+          return account === null ? [] : [account]
+        case 'eth_chainId':
+          return `0x${chainId.toString(16)}`
+        case 'wallet_switchEthereumChain':
+          if (options.rejects === true) throw Object.assign(new Error('User rejected'), { code: 4001 })
+          return null
+        case 'eth_sendTransaction': {
+          if (options.rejects === true) throw Object.assign(new Error('User rejected'), { code: 4001 })
+          const tx = (params ?? [])[0] as WalletStub['sent'][number]
+          sent.push(tx)
+          return hash
+        }
+        default:
+          throw new Error(`the wallet stub was asked for ${method}, which it does not answer`)
+      }
+    },
+    on: () => undefined,
+    removeListener: () => undefined,
+  }
+
+  return { provider, sent, asked }
 }

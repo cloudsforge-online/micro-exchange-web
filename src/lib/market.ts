@@ -26,7 +26,7 @@ import {
   SIG,
   selector,
 } from './abi.ts'
-import { constantProduct, sortTokens, type Deployment } from './dex.ts'
+import { constantProduct, shareBps, sortTokens, underlyingOf, type Deployment } from './dex.ts'
 import { ethCall } from './rpc.ts'
 
 /** A token, as much as the chain will say about it. */
@@ -267,6 +267,93 @@ export async function readAllowance(
     ]),
   )
   return decodeUintAt(data, 0)
+}
+
+/**
+ * One holding of one pool's own ERC-20.
+ *
+ * A "position" in a constant-product AMM is not a record anywhere — there is no positions table, no
+ * NFT and no registry. It is a BALANCE OF THE PAIR CONTRACT'S OWN TOKEN, and everything else about
+ * it is arithmetic over that balance and the reserves at the block it was read. So this shape
+ * carries the balance as the fact and the rest as derivations, and every derivation is nullable
+ * because a pair whose supply would not read cannot be divided by.
+ */
+export interface Position {
+  readonly pair: PairView
+  /** The reader's balance of the pair's LP token, in its own 18 decimals. */
+  readonly liquidity: bigint
+  /** The share of the pool that balance is, in basis points. Null when the supply did not read. */
+  readonly shareBps: number | null
+  /** What the balance is a claim on right now, pro rata. Null for the same reason. */
+  readonly amount0: bigint | null
+  readonly amount1: bigint | null
+}
+
+/** One address's LP balance in one pair, with what it is worth at the reserves just read. */
+export function positionIn(pair: PairView, liquidity: bigint): Position {
+  const supply = pair.reserves.totalSupply
+  if (supply === null || supply <= 0n) {
+    return { pair, liquidity, shareBps: null, amount0: null, amount1: null }
+  }
+  const underlying = underlyingOf({
+    liquidity,
+    totalSupply: supply,
+    reserve0: pair.reserves.reserve0,
+    reserve1: pair.reserves.reserve1,
+  })
+  return {
+    pair,
+    liquidity,
+    shareBps: shareBps(liquidity, supply),
+    amount0: underlying?.amount0 ?? null,
+    amount1: underlying?.amount1 ?? null,
+  }
+}
+
+/**
+ * Every pool this address holds liquidity in.
+ *
+ * ── IT SWEEPS THE FACTORY, BECAUSE THERE IS NOWHERE ELSE TO LOOK ─────────────────────────────
+ *
+ * No index maps a holder to their pools. The only honest way to answer "what do I have" is to ask
+ * every pair for this address's balance, which is what this does — bounded by `PAIR_PAGE_LIMIT`,
+ * and the bound is returned so the page can say the list is a page of a longer one rather than
+ * implying a reader has nothing in the fifty-first pool. On a chain with one market that is one
+ * extra call; the day it is not, the caption is already there.
+ *
+ * Null — not an empty list — when the FACTORY could not be read, for the reason `readAllPairs`
+ * gives at length: "you have no positions" and "the node did not answer" are opposite things to
+ * tell somebody, and the second one rendered as the first is how a reader concludes their deposit
+ * vanished.
+ *
+ * Zero balances are dropped. A reader who has never supplied liquidity gets an empty list, which
+ * the page renders as a sentence about what supplying liquidity is — not fifty rows of zero.
+ */
+export async function readPositions(
+  deployment: Deployment,
+  owner: string,
+): Promise<{
+  readonly positions: readonly Position[]
+  readonly scanned: number
+  readonly total: number
+} | null> {
+  const markets = await readAllPairs(deployment)
+  if (markets === null) return null
+  const balances = await Promise.all(
+    markets.pairs.map((pair) => readBalance(pair.address, owner)),
+  )
+  const positions: Position[] = []
+  markets.pairs.forEach((pair, index) => {
+    // `Promise.all` preserves length, so the `?? null` is only there to satisfy
+    // `noUncheckedIndexedAccess` — and it collapses into the branch below, which already treats
+    // "did not read" as the same case.
+    const liquidity = balances[index] ?? null
+    // A balance that failed to read is dropped rather than shown as zero: one unreadable pair
+    // among fifty is a fact about that pair, and a zero is a claim about this reader's money.
+    if (liquidity === null || liquidity <= 0n) return
+    positions.push(positionIn(pair, liquidity))
+  })
+  return { positions, scanned: markets.pairs.length, total: markets.total }
 }
 
 /**

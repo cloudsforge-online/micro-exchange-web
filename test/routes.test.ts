@@ -21,7 +21,17 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { NAV, NON_INDEX_PATHS, ROUTES, poolPath, swapPath } from '../src/lib/routes.ts'
+import {
+  NAV,
+  NEW_POOL_PATH,
+  NON_INDEX_PATHS,
+  POSITIONS_PATH,
+  ROUTES,
+  addLiquidityPath,
+  poolPath,
+  removeLiquidityPath,
+  swapPath,
+} from '../src/lib/routes.ts'
 import { read, stripComments } from './sources.ts'
 
 const nginx = stripComments(read('nginx.conf'), 'nginx')
@@ -229,15 +239,69 @@ test('a swap link is a QUERY on the index route, and that is the distinction it 
   assert.ok(built.startsWith('/?'), 'a swap link must be the index route, which nginx serves exactly')
 })
 
-test('there is no liquidity route and no positions route, and that is a decision', () => {
-  // Both would need write paths this surface has not built. A menu entry leading to an explanation
-  // of why a feature is absent is worse than the absence: it implies somebody decided against it
-  // rather than that phase H scoped this surface to a swap, a list and a proof.
+test('THE LIQUIDITY PAGES ARE CHILDREN OF /pools, SO NGINX NEEDED NO CHANGE', () => {
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  // This test used to assert there was no liquidity route and no positions route at all, on the
+  // ground that both needed write paths this surface had not built. micro-org#497 built them, and
+  // the decision the test now holds is the one that replaced it: they went UNDER `pools` rather
+  // than beside it.
+  //
+  // That is what makes the change safe to ship without touching nginx.conf. `pools` is already
+  // `wildcard: true`, so its location is the prefix form `^/(…|pools|…)(/|$)`, which matches every
+  // address beneath it. A fifth TOP-LEVEL entry would have needed a new alternation, and the
+  // failure mode of forgetting one is the quiet 404 this whole file exists to catch.
+  //
+  // So this asserts both halves: the four addresses are really mounted, and not one of them
+  // introduced a top-level route or a navigation entry.
+  // ══════════════════════════════════════════════════════════════════════════════════════════════
+  const mounted = routerPaths()
+  for (const child of ['pools/positions', 'pools/new', 'pools/:pair/add', 'pools/:pair/remove']) {
+    assert.ok(
+      mounted.includes(child),
+      `src/app.tsx does not mount ${JSON.stringify(child)}; the link builders in src/lib/routes.ts ` +
+        `point at an address that renders the not-found page`,
+    )
+  }
+
+  // The static children are declared BEFORE `pools/:pair`, so the ordering is visible to a reader
+  // rather than resting on react-router's ranking of static segments above dynamic ones. The
+  // ranking would save it either way; a person reading the file in a year would not know that.
+  assert.ok(
+    mounted.indexOf('pools/positions') < mounted.indexOf('pools/:pair'),
+    'pools/:pair is declared before pools/positions; put the static children first',
+  )
+  assert.ok(mounted.indexOf('pools/new') < mounted.indexOf('pools/:pair'))
+
+  // Not a fifth entry, and not a fifth tab. The write half is reached from the pools page and from
+  // a pool, which is where a reader is when the question occurs to them.
   for (const route of ROUTES) {
     assert.ok(!/liquidit|position|portfolio|dashboard|earning/i.test(route.path))
     assert.ok(!/liquidit|position|portfolio|dashboard|earning/i.test(route.label ?? ''))
   }
   assert.doesNotMatch(nginx, /location[^\n]*(liquidit|position)/i)
+
+  // And the property the whole arrangement rests on, asserted rather than assumed.
+  assert.ok(ROUTES.some((route) => route.path === 'pools' && route.wildcard))
+})
+
+test('a liquidity link is a child of the pool link, and shares its one encoding', () => {
+  const pair = '0xAbCdEf0123456789AbCdEf0123456789AbCdEf01'
+  assert.equal(addLiquidityPath(pair), '/pools/0xabcdef0123456789abcdef0123456789abcdef01/add')
+  assert.equal(removeLiquidityPath(pair), '/pools/0xabcdef0123456789abcdef0123456789abcdef01/remove')
+  // Built from `poolPath`, so the lower-casing and the escaping are decided once. Asserted through
+  // a segment that needs escaping, because that is the half a second template would get wrong.
+  assert.equal(addLiquidityPath('a/b c'), '/pools/a%2Fb%20c/add')
+
+  // The two static children are constants, and they must not be reachable through the builders —
+  // `addLiquidityPath('positions')` would produce a real address that means nothing.
+  assert.equal(POSITIONS_PATH, '/pools/positions')
+  assert.equal(NEW_POOL_PATH, '/pools/new')
+
+  // Every one of the four is beneath a path nginx enumerates. This is the assertion that would
+  // have caught them being mounted at `/liquidity` and `/positions` instead.
+  for (const path of [addLiquidityPath(pair), removeLiquidityPath(pair), POSITIONS_PATH, NEW_POOL_PATH]) {
+    assert.ok(NON_INDEX_PATHS.includes(path.split('/')[1] ?? ''))
+  }
 })
 
 test('THIS CONTAINER PROXIES NOTHING, WHICH IS THE SURFACE’S OWN ARGUMENT', () => {

@@ -338,6 +338,14 @@ export const SIG = Object.freeze({
   token1: 'token1()',
   totalSupply: 'totalSupply()',
   getPair: 'getPair(address,address)',
+  // The factory's ONE write, and it takes no owner. Verified against the deployed factories on both
+  // 7411 and 7412 rather than read off the source: `eth_call` of `createPair` from an address with
+  // no relationship to this project answers a pair address on both chains, and re-calling it for a
+  // pair that already exists reverts with `PAIR_EXISTS` — a state check, not an authorisation one.
+  // `setFeeTo`/`setFeeToSetter` are the only functions on that contract that look at `msg.sender`,
+  // and neither is in this table. So the button this signature is behind is a button that works for
+  // a stranger, which is the only reason it is allowed to exist (docs/ecosystem/39 §2).
+  createPair: 'createPair(address,address)',
   allPairsLength: 'allPairsLength()',
   allPairs: 'allPairs(uint256)',
   pairCodeHash: 'pairCodeHash()',
@@ -377,6 +385,21 @@ export const SIG = Object.freeze({
   swapExactETHForTokens: 'swapExactETHForTokens(uint256,address[],address,uint256)',
   // secret-hygiene: allow the native-out entry point; the literal is public calldata on every swap
   swapExactTokensForETH: 'swapExactTokensForETH(uint256,uint256,address[],address,uint256)',
+  // ── the four liquidity entry points ─────────────────────────────────────────────────────────
+  //
+  // Two shapes each, for the same reason the swaps have three: the native coin has no
+  // `transferFrom`, so a deposit that includes EMBER arrives as `value` and is named in no
+  // argument. Picking the token-token form for a pair containing WEMBER is not a revert — it is a
+  // deposit of wrapped coin the reader did not know they had to hold, which fails at the allowance
+  // rather than at the router and reads as a broken page.
+  //
+  // `…WithPermit` and `…SupportingFeeOnTransferTokens` are deliberately absent. A permit is a
+  // signature over an EIP-712 domain this bundle cannot show a reader before they sign it, and the
+  // fee-on-transfer variants return nothing, so a UI built on them cannot say what came back.
+  addLiquidity: 'addLiquidity(address,address,uint256,uint256,uint256,uint256,address,uint256)',
+  addLiquidityETH: 'addLiquidityETH(address,uint256,uint256,uint256,address,uint256)',
+  removeLiquidity: 'removeLiquidity(address,address,uint256,uint256,uint256,address,uint256)',
+  removeLiquidityETH: 'removeLiquidityETH(address,uint256,uint256,uint256,address,uint256)',
   // Wrapping, for the native coin.
   deposit: 'deposit()',
   withdraw: 'withdraw(uint256)',

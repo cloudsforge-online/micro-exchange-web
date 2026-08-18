@@ -267,6 +267,136 @@ export function minimumOut(amountOut: bigint, toleranceBps: number): bigint {
   return (amountOut * BigInt(10_000 - toleranceBps)) / 10_000n
 }
 
+/* ── the liquidity-provider arithmetic ─────────────────────────────────────────────────────────
+ *
+ * `UniswapV2Pair.mint` and `.burn`, ported for the same reason the swap arithmetic is: the reader
+ * has to be shown what a deposit is worth BEFORE they sign it, and there is no view function on the
+ * pair that will say. `mint` computes the LP amount from the balances it finds when it is called,
+ * which means the only way to ask the chain is to send the transaction.
+ *
+ * So this is an ESTIMATE, and every caller labels it as one. The two things that can move it
+ * between the quote and the block are stated on the page rather than hidden here: somebody else's
+ * trade changes the ratio (which is what `amountAMin`/`amountBMin` are for), and a protocol fee
+ * being switched on mints extra LP to `feeTo` in the same call, diluting this answer slightly.
+ * `readFactoryFacts` reads whether that switch is on, and the add-liquidity page prints it.
+ */
+
+/**
+ * The LP tokens the pair burns to `address(0)` on the very first deposit. 10³, from V2.
+ *
+ * IT IS NOT A FEE AND IT IS NOT RECOVERABLE. The first depositor receives `sqrt(k) − 1000` rather
+ * than `sqrt(k)`, and those thousand units stay minted to the zero address forever, so a pool can
+ * never be emptied to a total supply of zero and the `sqrt` branch below can never be re-entered
+ * against reserves somebody left behind. On an 18-decimal pair it is a millionth of a millionth of
+ * a token; on a 6-decimal one it is a thousandth of a unit, which is worth saying out loud.
+ */
+export const MINIMUM_LIQUIDITY = 1_000n
+
+/**
+ * Integer square root, truncating — Babylonian, exactly as `UniswapV2Pair` does it.
+ *
+ * Not `Math.sqrt(Number(x))`. `sqrt(a·b)` on a first deposit is taken over a product of two
+ * 18-decimal amounts, which routinely exceeds 2⁵³ by twenty orders of magnitude; a float would
+ * answer with the right exponent and the wrong number, and the page would print an LP balance that
+ * disagrees with the one the pair mints. Truncating is what the contract does, so this truncates.
+ */
+export function sqrt(value: bigint): bigint {
+  if (value < 0n) throw new RangeError('sqrt of a negative')
+  if (value < 2n) return value
+  let x = value
+  let y = (x + 1n) / 2n
+  while (y < x) {
+    x = y
+    y = (x + value / x) / 2n
+  }
+  return x
+}
+
+/**
+ * What the pair would mint for a deposit of `amount0` and `amount1`, or null.
+ *
+ * TWO BRANCHES, AND WHICH ONE APPLIES IS THE MOST IMPORTANT THING ON THE PAGE. With a total supply
+ * of zero this is a first deposit: the amounts are not checked against anything, because there is
+ * nothing to check them against — whatever ratio is deposited BECOMES the price. Afterwards the
+ * mint is the smaller of the two proportional claims, and the excess on the other side is a gift to
+ * the pool, which is why the router computes an optimal counter-amount instead of taking both
+ * numbers at face value.
+ *
+ * Null rather than zero where there is no answer: a non-positive amount, a supply that is positive
+ * against a reserve of zero (a pair whose state cannot be read consistently), or a mint that rounds
+ * to nothing — the pair itself reverts on that last one with `INSUFFICIENT_LIQUIDITY_MINTED`, and a
+ * zero on screen would read as "this deposit is free" rather than as "this deposit fails".
+ */
+export function liquidityMinted(opts: {
+  readonly amount0: bigint
+  readonly amount1: bigint
+  readonly reserve0: bigint
+  readonly reserve1: bigint
+  readonly totalSupply: bigint
+}): bigint | null {
+  const { amount0, amount1, reserve0, reserve1, totalSupply } = opts
+  if (amount0 <= 0n || amount1 <= 0n || totalSupply < 0n) return null
+  if (totalSupply === 0n) {
+    const root = sqrt(amount0 * amount1)
+    if (root <= MINIMUM_LIQUIDITY) return null
+    return root - MINIMUM_LIQUIDITY
+  }
+  if (reserve0 <= 0n || reserve1 <= 0n) return null
+  const from0 = (amount0 * totalSupply) / reserve0
+  const from1 = (amount1 * totalSupply) / reserve1
+  const minted = from0 < from1 ? from0 : from1
+  return minted > 0n ? minted : null
+}
+
+/**
+ * A holding as a share of the pool, in basis points. Null when there is nothing to be a share of.
+ *
+ * Basis points rather than a float, because `formatBps` already exists and because a share below a
+ * hundredth of a percent renders there as "<0.01%" rather than as a zero. A liquidity provider
+ * holding a dust position should be told it is dust, not told it is nothing.
+ */
+export function shareBps(liquidity: bigint, totalSupply: bigint): number | null {
+  if (liquidity < 0n || totalSupply <= 0n) return null
+  return Number((liquidity * 10_000n) / totalSupply)
+}
+
+/**
+ * What a quantity of LP tokens is a claim on, at these reserves. `UniswapV2Pair.burn`, pro rata.
+ *
+ * The contract divides by the pair's token BALANCES rather than by its reserves, and the two differ
+ * only when somebody has transferred tokens to the pair without syncing — which is a donation, and
+ * which makes the real burn slightly larger than this. Erring low is the right direction: the
+ * numbers this feeds are the ones a reader sets a minimum against, and a minimum computed from an
+ * over-estimate is a withdrawal that reverts.
+ */
+export function underlyingOf(opts: {
+  readonly liquidity: bigint
+  readonly totalSupply: bigint
+  readonly reserve0: bigint
+  readonly reserve1: bigint
+}): { readonly amount0: bigint; readonly amount1: bigint } | null {
+  const { liquidity, totalSupply, reserve0, reserve1 } = opts
+  if (liquidity <= 0n || totalSupply <= 0n || liquidity > totalSupply) return null
+  return {
+    amount0: (liquidity * reserve0) / totalSupply,
+    amount1: (liquidity * reserve1) / totalSupply,
+  }
+}
+
+/**
+ * A percentage of a holding, as an exact integer amount.
+ *
+ * 100% is returned unchanged rather than computed, so that "all of it" is bit-for-bit the balance
+ * the pair will let go of. `(balance * 100n) / 100n` happens to be exact, but the day somebody
+ * changes the steps to include 33% the rounding would silently leave a wei behind, and a "remove
+ * everything" that leaves a position on the screen is a bug report.
+ */
+export function portionOf(balance: bigint, percent: number): bigint {
+  if (balance <= 0n || percent <= 0) return 0n
+  if (percent >= 100) return balance
+  return (balance * BigInt(Math.floor(percent))) / 100n
+}
+
 /**
  * The constant product, for display.
  *
