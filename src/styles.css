@@ -823,6 +823,32 @@ body {
   line-height: var(--cf-leading-snug);
 }
 
+/* ---- the seam to the custodial desk ------------------------------------ */
+
+/*
+ * Prose and one link, under a hairline at the foot of the page. It takes the small-print treatment
+ * and deliberately NOT a panel: a boxed block beside the form and the curve reads as a third thing
+ * to choose between, and this is not an alternative control — it is a sentence about where else the
+ * word "swap" is used and what it means there.
+ */
+.xc-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cf-space-2xs);
+  padding-top: var(--cf-space-md);
+  border-top: 1px solid var(--cf-line);
+}
+
+.xc-elsewhere__title {
+  margin: 0;
+  font-size: var(--cf-text-sm);
+  font-weight: 600;
+  font-family: var(--cf-font-mono);
+  text-transform: uppercase;
+  letter-spacing: var(--cf-tracking-wide);
+  color: var(--cf-fg-dim);
+}
+
 /* ---- the invariant curve: the one place colour is spent ---------------- */
 
 .xc-curve {

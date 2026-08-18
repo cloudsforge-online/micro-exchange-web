@@ -40,6 +40,8 @@ import { createElement } from 'react'
 import { App } from '../src/app.tsx'
 import { pairFor } from '../src/lib/dex.ts'
 import { NOT_CUSTODIED } from '../src/lib/format.ts'
+import { setViewedNetwork } from '../src/lib/viewed.ts'
+import { installWindow, removeWindow } from './browser-stubs.ts'
 import { assertMounted, mount, withScreen, type MountOptions, type Screen } from './dom.ts'
 import {
   chain,
@@ -209,6 +211,92 @@ describe('the swap page', () => {
       assert.match(screen.text(), /The markets did not load/)
       assert.ok(screen.queryByRole('button', 'Read again') !== null)
       assert.doesNotMatch(screen.text(), /has not created a market yet/)
+    })
+  })
+})
+
+/**
+ * micro-org#496. Two products now carry a control called "swap", and they differ in the only way
+ * that matters: who is holding the coins while it happens. The seam at the foot of the swap page is
+ * the one place on this surface that says so, and these are the ways it can be worse than nothing —
+ * a link that goes to the wrong estate, and prose that describes the two venues as the same thing.
+ *
+ * The sentences are written out longhand below rather than imported from `src/`. A test that
+ * compares the screen with the constant the screen rendered from is green for every value of that
+ * constant, including a paraphrase that has quietly lost the custody clause.
+ */
+describe('the seam to the custodial desk', () => {
+  /** Forge Hub's own address on this estate, and the desk's address inside it. */
+  const HUB = 'https://hub.cloudsforge.online'
+  const HUB_TESTNET = 'https://hub-testnet.cloudsforge.online'
+  const desk = (screen: Screen): Element => screen.byRole('link', /Convert in Forge Hub/)
+
+  it('says which side of the custody line each venue is on', async () => {
+    await page(chain(), '/', async (screen) => {
+      const text = screen.text()
+      // The desk's half: a quoted rate, out of CloudsForge's own holdings, both sides held by
+      // CloudsForge.
+      assert.match(text, /a different arrangement, not a second door to this one/)
+      assert.match(text, /quotes you a rate/)
+      assert.match(text, /out of its own holdings/)
+      assert.match(text, /keeps custody of both sides/)
+      // This surface's half, and it is the half a reader must not carry across: nothing is held
+      // here and nothing can be given back. The chain's name is composed from the deployment, so
+      // the sentence is true of whichever Hearth the wallet is on rather than of the one this
+      // repository was written on.
+      assert.match(text, /a contract on Hearth\b/)
+      assert.match(text, /your own wallet signs/)
+      assert.match(text, /CloudsForge holds nothing and can put nothing back/)
+      // And what the desk actually credits, which is the sentence that stops somebody converting
+      // and then looking for the coin in the wallet this page reads.
+      assert.match(text, /not the wallet this page reads/)
+    })
+  })
+
+  it('links at the desk itself, on the estate serving this page', async () => {
+    await page(chain(), '/', async (screen) => {
+      assert.equal(desk(screen).getAttribute('href'), `${HUB}/convert`)
+    })
+  })
+
+  it('FOLLOWS THE VIEWED NETWORK, so the desk it offers holds the balances on screen', async () => {
+    // The bug this pins is silent and it is not the reader's to notice: they press Testnet, look at
+    // testnet pools, follow this link, and land on a MAINNET account holding none of it. The link
+    // is composed through `viewedSurfaceUrl`, which answers for the network being viewed rather
+    // than for the hostname — under the combined view both estates are served from the mainnet
+    // names, so the address bar is not an answer to this question.
+    //
+    // The choice is module state in `src/lib/viewed.ts`, so it is set with a window installed and
+    // put back afterwards whatever happens; a leaked override would re-point every scenario
+    // declared after this one.
+    const browser = installWindow(`${AT}/`)
+    try {
+      setViewedNetwork('testnet')
+    } finally {
+      removeWindow()
+    }
+    try {
+      await page(chain(), '/', async (screen) => {
+        assert.equal(desk(screen).getAttribute('href'), `${HUB_TESTNET}/convert`)
+      })
+    } finally {
+      installWindow(`${AT}/`)
+      try {
+        setViewedNetwork('mainnet')
+      } finally {
+        removeWindow()
+      }
+    }
+    assert.ok(browser.assigned.length === 0, 'nothing here navigates; the link is an href')
+  })
+
+  it('is still there when the factory has no market to trade against', async () => {
+    // The reader with nothing to swap is the one the seam is most use to, so it sits OUTSIDE the
+    // branch that renders the form. Putting it inside would have hidden it in exactly the state
+    // where "there is another way to do this" is the only useful thing left on the page.
+    await page(chain({ pairs: [] }), '/', async (screen) => {
+      assert.match(screen.text(), /has not created a market yet/)
+      assert.equal(desk(screen).getAttribute('href'), `${HUB}/convert`)
     })
   })
 })
