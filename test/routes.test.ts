@@ -22,6 +22,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  BASE,
   NAV,
   NEW_POOL_PATH,
   NON_INDEX_PATHS,
@@ -29,6 +30,7 @@ import {
   ROUTES,
   addLiquidityPath,
   poolPath,
+  publicPath,
   removeLiquidityPath,
   swapPath,
 } from '../src/lib/routes.ts'
@@ -90,7 +92,20 @@ test('WILDCARD IS NOT DECORATION: it is what decides the nginx form', () => {
 test('NGINX ENUMERATES EVERY ROUTE, AND THE INDEX IS EXACT', () => {
   // `location = /` and not `location /`: the prefix form would match every address on the surface
   // and turn the whole "unknown paths answer 404" argument in nginx.conf's header into a comment.
-  assert.match(nginx, /location\s*=\s*\/\s*\{/, 'nginx.conf has no exact-match location for the index')
+  // `location = /exchange`, DERIVED FROM `BASE` rather than written out, and both slash forms are
+  // required. The front door is a path now, so it has two spellings a reader can arrive at — the
+  // bare one and the trailing-slash one — where `/` had exactly one. Enumerating only the bare form
+  // would 404 the folder-with-a-slash that a browser or a link-fixer produces by normalising.
+  assert.match(
+    nginx,
+    new RegExp(`location\\s*=\\s*${BASE}\\s*\\{`),
+    `nginx.conf has no exact-match location for the index at ${BASE}`,
+  )
+  assert.match(
+    nginx,
+    new RegExp(`location\\s*=\\s*${BASE}/\\s*\\{`),
+    `nginx.conf has no exact-match location for ${BASE}/ — the trailing-slash form of the front door`,
+  )
 
   for (const path of NON_INDEX_PATHS) {
     // The alternation form `location ~ ^/(pools|contracts)(/|$)` is one block for several routes,
@@ -111,8 +126,17 @@ test('nginx enumerates nothing that is not a route', () => {
   // The mirror of the test above, and the one that catches a route being REMOVED. A stale
   // alternation is worse than a missing one: it answers 200 for an address the router no longer
   // knows, which is the "every address is a success" failure the enumeration exists to stop.
-  const alternations = [...nginx.matchAll(/location\s+~\s+\^\/\(([^)]+)\)/g)].flatMap((m) =>
-    (m[1] ?? '').split('|'),
+  // ANCHORED ON `BASE`, and this is the assertion that would have failed OPEN if it were not. The
+  // pattern was `\^\/\(` — a literal `^/(` — which matched `location ~ ^/(pools|…)` and stopped
+  // matching anything at all the moment the block became `^/exchange/(pools|…)`. An empty match set
+  // makes the loop below run zero times and the test pass, reporting nothing, forever.
+  const alternations = [
+    ...nginx.matchAll(new RegExp(`location\\s+~\\s+\\^${BASE}/\\(([^)]+)\\)`, 'g')),
+  ].flatMap((m) => (m[1] ?? '').split('|'))
+  assert.ok(
+    alternations.length > 0,
+    `no enumerated route alternation was found under ${BASE} in nginx.conf — this test can only ` +
+      `catch a stale route while it can find the block that lists them`,
   )
   for (const alt of alternations) {
     assert.ok(
@@ -131,15 +155,20 @@ test('THE SPA FALLBACK IS ABSENT AND error_page IS PRESENT', () => {
     /try_files\s+\$uri\s+(\$uri\/\s+)?\/index\.html/,
     'nginx.conf has the SPA fallback, which makes "page not found" a 200 — see its own header',
   )
-  assert.match(nginx, /error_page\s+404\s+\/index\.html/)
+  // The shell is named by its path INSIDE the image, which is where the Dockerfile copies the build.
+  assert.match(nginx, new RegExp(`error_page\\s+404\\s+${BASE}/index\\.html`))
 })
 
 test('the sitemap lists the routes a crawler should have, and NOT one pair’s address', () => {
-  const sitemap = nginx.slice(nginx.indexOf('location = /sitemap.xml'))
+  const sitemap = nginx.slice(nginx.indexOf(`location = ${BASE}/sitemap.xml`))
+  // Composed through `publicPath` — the one crossing from a router path to a public one — so this
+  // asserts the ADDRESSES a crawler is handed rather than a string that happens to contain a route
+  // name. The index is `${BASE}`, with no trailing slash, matching the canonical.
   for (const path of ['', ...NON_INDEX_PATHS]) {
+    const address = publicPath(path === '' ? '/' : `/${path}`)
     assert.ok(
-      sitemap.includes(`$host/${path}`) || (path === '' && sitemap.includes('<loc>$scheme://$host<')),
-      `/${path} is a route and is not in the sitemap`,
+      sitemap.includes(`$host${address}<`),
+      `${address} is a route and is not in the sitemap`,
     )
   }
   // `/pools/<address>` is unbounded — one address per market, minted by whoever calls

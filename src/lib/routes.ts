@@ -13,6 +13,46 @@
  * real status.
  */
 
+/**
+ * ── WHERE THIS BUNDLE IS MOUNTED, AND WHY THE TWO KINDS OF PATH BELOW ARE NOT THE SAME KIND ──────
+ *
+ * This desk used to be a hostname. It is now a FOLDER on the apex: `/exchange`, wave 2 of the
+ * consolidation argued in micro-deploy `docs/apex-consolidation.md`. The registry row says the same
+ * thing in one line — `subdomain: ''`, `basePath: '/exchange'` — and everything the estate composes
+ * about this surface comes from there.
+ *
+ * Inside this repository the move splits every address into two, and getting the pair the wrong way
+ * round is the failure mode of the whole change:
+ *
+ *   A ROUTER PATH is what `react-router` matches, and it is relative to the mount. `/pools/0x…`.
+ *     Every `<Link to>`, every `<Route path>`, `NAV`, `poolPath()`, `swapPath()`, `POSITIONS_PATH`.
+ *     `basename` in `src/app.tsx` puts the prefix back on the way out, so a router path that
+ *     already carries it renders `/exchange/exchange/pools/0x…`.
+ *
+ *   A PUBLIC PATH is what a reader's address bar shows, what gets pasted into a chat window, and
+ *     what a crawler is handed. `/exchange/pools/0x…`. Every `<loc>` in the sitemap and every
+ *     `location` in `nginx.conf`.
+ *
+ * `publicPath()` is the one crossing, and it is the only place `BASE` is concatenated.
+ *
+ * EVERY EXPORTED HELPER BELOW RETURNS A ROUTER PATH, and that is deliberate rather than incidental:
+ * a pair address pasted into a conversation is this surface's most-used link, it is produced by
+ * `poolPath()`, and it is handed to `<Link to>`. Making the helpers public-path would have put the
+ * prefix on twice everywhere it matters and nowhere else.
+ */
+export const BASE = '/exchange'
+
+/**
+ * A router path as a public one.
+ *
+ * The index is `/exchange` rather than `/exchange/` — no trailing slash anywhere on this surface,
+ * so the sitemap entry and the `location` in `nginx.conf` are one address rather than two with a
+ * redirect between them.
+ */
+export function publicPath(path: string): string {
+  return path === '/' ? BASE : `${BASE}${path}`
+}
+
 export interface AppRoute {
   /** The path segment, without a leading slash. The index route is the empty string. */
   readonly path: string

@@ -29,8 +29,8 @@
  * is public and a cookie on it would be a cookie sent to an endpoint that has no use for one.
  * ════════════════════════════════════════════════════════════════════════════════════════════════
  */
-import { viewedNetwork } from './viewed.ts'
-import { isLocal } from './hosts.ts'
+import { viewedHosts } from './viewed.ts'
+import { isLocal, placementIsKnown } from './hosts.ts'
 
 /** A JSON-RPC failure that carries the node's own message. Never carries the request URL. */
 export class RpcError extends Error {
@@ -45,23 +45,41 @@ export class RpcError extends Error {
 /**
  * The RPC endpoint for the network the reader is VIEWING.
  *
- * `viewedNetwork()` rather than the hostname, so pressing Testnet re-points the chain this page
- * reads instead of navigating away from it (micro-org#459). The suffix is composed the same way
- * `viewedHosts()` composes every other address, and the apex comes off the page.
+ * `viewedHosts()` rather than the hostname, so pressing Testnet re-points the chain this page reads
+ * instead of navigating away from it (micro-org#459).
  *
- * Null on a local stack and on any address the registry cannot split. There is no localhost default
- * — a dev port guessed for a chain node is a guess that fails as a connection refused with no
- * explanation, and this page's own "no exchange on this network" state is a better answer than a
+ * Null on a local stack and on any placement the registry does not recognise. There is no localhost
+ * default — a dev port guessed for a chain node is a guess that fails as a connection refused with
+ * no explanation, and this page's own "no exchange on this network" state is a better answer than a
  * spinner. Set up a node and open the page against a real estate.
+ *
+ * ── IT USED TO DERIVE THE APEX ITSELF, AND THE MOVE TO A SUBFOLDER IS WHAT EXPOSED THAT ──────────
+ *
+ * The body was hand-rolled string surgery on the hostname:
+ *
+ *     const parts = hostname.split('.')
+ *     if (parts.length <= 2) return null
+ *     const apex = parts.slice(1).join('.')
+ *
+ * — drop the first label, and give up if there is no label to drop. That encodes an assumption this
+ * bundle no longer satisfies: that it is always served from a SUBDOMAIN. Served from
+ * `cloudsforge.online/exchange` the hostname is two labels, so it returned null and every page on
+ * this surface rendered "There is no chain endpoint for this address" — the honest wording for a
+ * preview deployment, and completely wrong for the estate's own apex.
+ *
+ * The comment above this function already claimed the endpoint was "composed the same way
+ * `viewedHosts()` composes every other address". It was not; it was a second copy of the apex
+ * derivation, and the copies had drifted the moment one surface stopped being a hostname. Now the
+ * claim is true, and there is one derivation in the estate rather than two.
  */
 export function rpcUrl(): string | null {
   const hostname = typeof window === 'undefined' ? '' : window.location.hostname
   if (isLocal(hostname)) return null
-  const parts = hostname.split('.')
-  if (parts.length <= 2) return null
-  const apex = parts.slice(1).join('.')
-  const label = viewedNetwork() === 'testnet' ? 'rpc-testnet' : 'rpc'
-  return `https://${label}.${apex}`
+  // The same question `isRegisteredPlacement` answers for the shell's notice, asked here because
+  // the answers must agree: a page that shows "this placement is unknown" and still composes a
+  // chain endpoint from it would read one estate's chain while telling the reader it cannot.
+  if (!placementIsKnown()) return null
+  return viewedHosts().rpc
 }
 
 let nextId = 1

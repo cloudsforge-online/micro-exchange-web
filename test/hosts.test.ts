@@ -58,8 +58,19 @@ function atPage<T>(url: string, fn: () => T): T {
 
 test('THE REGISTRY SAYS THIS SURFACE SERVES A PAGE, WHICH IS WHAT MADE THIS REPOSITORY LEGAL', () => {
   const exchange = surface(PRODUCT)
-  assert.equal(exchange.subdomain, 'exchange')
-  assert.equal(KNOWN_SUBS.has('exchange'), true)
+
+  // ── IT IS A PATH ON THE APEX, AND `KNOWN_SUBS` NO LONGER HOLDS `exchange` ──────────────────────
+  //
+  // This asserted `subdomain === 'exchange'` and `KNOWN_SUBS.has('exchange')` until 2026-08-19. Both
+  // are now false, and the SECOND one is the consequence worth asserting rather than deleting:
+  // `KNOWN_SUBS` is what `cloudsforgeHosts()` strips to find the apex, so with `exchange` gone from
+  // it a bundle served at `exchange.cloudsforge.online` would treat that whole name as its apex and
+  // compose every sibling one level too deep. That is CORRECT — nothing is served there any more,
+  // the hostname is a 301 — and it is asserted so that the day somebody puts a bundle back on that
+  // hostname, this fails and says why.
+  assert.equal(exchange.subdomain, '')
+  assert.equal(exchange.basePath, '/exchange')
+  assert.equal(KNOWN_SUBS.has('exchange'), false)
 
   // `servesUi` was FALSE for the whole time this was a plan, and the row said why in full: nothing
   // answered the hostname, so a `true` would have put a dead link in every footer in the estate. It
@@ -190,31 +201,40 @@ test('the four development hostnames are the same four the design system treats 
   }
 })
 
-test('THE REGISTRY PLACES THIS SURFACE AT ITS OWN HOSTNAME, IN BOTH ENVIRONMENT SHAPES', () => {
+test('THE REGISTRY PLACES THIS SURFACE AT A PATH ON THE APEX, IN BOTH ENVIRONMENT SHAPES', () => {
+  // The mainnet apex plus the mount. `hosts()[PRODUCT]` is a BASE URL, not an origin, and the
+  // difference is the whole of this change — the estate composes every link to this surface from
+  // exactly this value.
   assert.equal(
-    atPage('https://exchange.cloudsforge.online/', () => hosts()[PRODUCT]),
-    'https://exchange.cloudsforge.online',
+    atPage('https://cloudsforge.online/exchange', () => hosts()[PRODUCT]),
+    'https://cloudsforge.online/exchange',
   )
-  assert.equal(atPage('https://exchange.cloudsforge.online/', placementIsKnown), true)
+  assert.equal(atPage('https://cloudsforge.online/exchange', placementIsKnown), true)
+
+  // Anywhere UNDER the mount is placed too, because that is where a reader actually is most of the
+  // time — the front door is one address out of a surface full of them.
+  assert.equal(atPage('https://cloudsforge.online/exchange/pools', placementIsKnown), true)
 
   // The environment is a SUFFIX on the first label, never a second one. Cloudflare's Universal SSL
-  // wildcard matches exactly one label, so `exchange.testnet.cloudsforge.online` fails the
-  // handshake at the edge before it reaches the estate — which is why the registry composes
-  // `exchange-testnet`.
+  // wildcard matches exactly one label. The apex surface has no label to suffix, so the environment
+  // stands alone as `testnet.cloudsforge.online` — and the mount rides on it unchanged, which is
+  // the property that lets one image serve both estates.
   assert.equal(
-    atPage('https://exchange-testnet.cloudsforge.online/', () => hosts()[PRODUCT]),
-    'https://exchange-testnet.cloudsforge.online',
+    atPage('https://testnet.cloudsforge.online/exchange', () => hosts()[PRODUCT]),
+    'https://testnet.cloudsforge.online/exchange',
   )
-  assert.equal(atPage('https://exchange-testnet.cloudsforge.online/', placementIsKnown), true)
+  assert.equal(atPage('https://testnet.cloudsforge.online/exchange', placementIsKnown), true)
 
   // And a testnet page composes TESTNET siblings. The failure this rules out is the quiet one: a
   // suffixed hostname resolving to the mainnet apex, where every link works and points at real
   // money. On this surface that is not a metaphor — the links go to an explorer, and the addresses
   // beneath them would be a different chain's.
-  assert.match(atPage('https://exchange-testnet.cloudsforge.online/', () => hosts().site), /testnet/)
+  assert.match(atPage('https://testnet.cloudsforge.online/exchange', () => hosts().site), /testnet/)
 
-  // A local checkout is always placed — the registry resolves every surface to a localhost port.
-  assert.equal(atPage('http://localhost:5194/', placementIsKnown), true)
+  // A local checkout is always placed — the registry resolves every surface to a localhost port,
+  // and `vite.config.ts`'s `base` makes the dev server answer under the mount, so this is the
+  // address `pnpm dev` really serves rather than an approximation of it.
+  assert.equal(atPage('http://localhost:5194/exchange', placementIsKnown), true)
 })
 
 test('AN ADDRESS THE REGISTRY CANNOT PLACE SAYS SO INSTEAD OF GUESSING', () => {

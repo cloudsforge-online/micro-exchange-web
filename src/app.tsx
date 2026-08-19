@@ -42,6 +42,7 @@ import { ScrollToTop } from './components/scroll-to-top.tsx'
 import { AppShell } from './components/shell.tsx'
 import { AuthProvider } from './lib/auth.tsx'
 import { ChainProvider } from './lib/chain.tsx'
+import { BASE } from './lib/routes.ts'
 import { AddLiquidityPage } from './pages/add-liquidity.tsx'
 import { ContractsPage } from './pages/contracts.tsx'
 import { NewPoolPage } from './pages/new-pool.tsx'
@@ -55,7 +56,7 @@ import { SwapPage } from './pages/swap.tsx'
 
 export function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={BASE}>
       <ScrollToTop />
       <ChainProvider>
         <AuthProvider>

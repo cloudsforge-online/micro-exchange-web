@@ -131,7 +131,12 @@ test('THE SURFACE IS IN THE PRODUCT MENU, WHICH IS A REGISTRY FACT AND NOT A LOC
   // standing on — which is exactly what "forge exchange is not available in the product menu"
   // described, and it is fixed upstream rather than here.
   const here = surface('exchange')
-  assert.equal(here.subdomain, 'exchange')
+  // `subdomain: ''` + `basePath` since the apex consolidation. The switcher composes its entry from
+  // `cloudsforgeHosts()`, which appends the mount to the origin, so a menu entry for this surface is
+  // still an address that answers — see the "has no home" invariant in micro-ui's surfaces.test.ts,
+  // which was rewritten in the same change because it asserted the subdomain as a proxy for that.
+  assert.equal(here.subdomain, '')
+  assert.equal(here.basePath, '/exchange')
   assert.equal(here.inSwitcher, true, 'the registry row is out of the switcher again')
   // Its own hue, not a borrowed one: the distinct-accent guard over SWITCHER_SURFACES is what
   // demanded it the moment the row went in, and `tokens.css` has a matching block.

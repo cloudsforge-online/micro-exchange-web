@@ -103,7 +103,10 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # fails the parse — measured, the container exits 1) is in pool-web's Dockerfile and nginx.conf.
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 
-COPY --from=build /app/dist /usr/share/nginx/html
+# THE MOUNT IS APPLIED HERE, NOT IN THE BUILD. `dist/` stays flat, so the prerender and the tests
+# that read it keep asserting the paths they were written to assert, and the one place that knows
+# this surface lives under `/exchange` on the way out is the copy into the image.
+COPY --from=build /app/dist /usr/share/nginx/html/exchange
 
 EXPOSE 8080
 

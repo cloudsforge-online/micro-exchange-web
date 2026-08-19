@@ -33,10 +33,10 @@ import { installWindow, removeWindow } from './browser-stubs.ts'
 import { rpcUrl } from '../src/lib/rpc.ts'
 import { setViewedNetwork, viewedHosts, viewedNetwork } from '../src/lib/viewed.ts'
 
-/** A real address on this surface, on the mainnet estate. */
-const PAGE = 'https://exchange.cloudsforge.online/'
+/** A real address on this surface, on the mainnet estate — a path on the apex since 2026-08-19. */
+const PAGE = 'https://cloudsforge.online/exchange'
 /** A development address: no chain node is composed for it, deliberately. */
-const DEV = 'http://localhost:5194/'
+const DEV = 'http://localhost:5194/exchange'
 
 /** Run `body` with a window at `url`, and take the window away again whatever happens. */
 function at<T>(url: string, body: () => T): T {
@@ -82,7 +82,11 @@ describe('the in-place network view', () => {
     // Nothing in `src/` names a CloudsForge hostname — one image is served from localhost, from a
     // preview and from two production estates. The endpoint is therefore composed, and this is the
     // assertion that it is composed rather than merely correct on the estate it was written on.
-    at('https://exchange.example.test/', () => {
+    // The apex is `example.test` and the mount rides on it, exactly as it does on cloudsforge.online.
+    // This was `https://exchange.example.test/` while the surface was a hostname; that address is
+    // now an unplaced one, and `rpcUrl()` correctly answers null for it rather than reading a chain
+    // it cannot name.
+    at('https://example.test/exchange', () => {
       assert.equal(rpcUrl(), 'https://rpc.example.test')
       setViewedNetwork('testnet')
       assert.equal(rpcUrl(), 'https://rpc-testnet.example.test')

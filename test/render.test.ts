@@ -72,11 +72,26 @@ import {
   type WalletStub,
 } from './fixtures.ts'
 
-/** This surface's own address on the mainnet estate. */
-const AT = 'https://exchange.cloudsforge.online'
+/**
+ * This surface's own address on the mainnet estate — a PATH on the apex since 2026-08-19.
+ *
+ * Every `${AT}${path}` below therefore composes `https://cloudsforge.online/exchange/pools` rather
+ * than `https://exchange.cloudsforge.online/pools`, and the router matches it because `basename` in
+ * `src/app.tsx` strips the mount back off. Mounting a scenario at the old hostname now renders
+ * NOTHING — react-router refuses a URL that does not start with its basename — which is the loudest
+ * form this change could have taken and better than the alternative, a page that renders against an
+ * apex resolved one level too deep.
+ */
+const AT = 'https://cloudsforge.online/exchange'
 
-/** The vite dev server. No chain endpoint is composed for it, deliberately. */
-const DEV = 'http://localhost:5194/'
+/**
+ * The vite dev server. No chain endpoint is composed for it, deliberately.
+ *
+ * It carries the mount too: `vite.config.ts` sets `base: '/exchange/'`, so the dev server genuinely
+ * answers at `localhost:5194/exchange` and a bare `localhost:5194/` would fail the basename here
+ * exactly as it would in a browser.
+ */
+const DEV = 'http://localhost:5194/exchange'
 
 const app = () => createElement(App)
 
