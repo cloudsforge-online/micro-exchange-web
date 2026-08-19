@@ -1,6 +1,6 @@
 {
   "name": "@cloudsforge/exchange-web",
-  "version": "2026.8.86",
+  "version": "2026.8.87",
   "packageManager": "pnpm@11.9.0",
   "private": true,
   "description": "The public front for Forge Exchange: swap one token for another against a constant-product pool on Hearth, see every market the factory has made, and re-run the checks that say the contracts are what they claim to be. Nothing is custodied and no account is needed.",
