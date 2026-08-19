@@ -33,7 +33,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { ENV_LABELS } from '@cloudsforge/ui/surfaces'
 import { SURFACE_DESCRIPTION } from '../src/lib/hosts.ts'
-import { NON_INDEX_PATHS } from '../src/lib/routes.ts'
+import { BASE, NON_INDEX_PATHS, publicPath } from '../src/lib/routes.ts'
 import { read, stripComments } from './sources.ts'
 
 const HTML = stripComments(read('index.html'), 'html')
@@ -103,15 +103,21 @@ test('the environment map catches BOTH hostname shapes', () => {
   assert.match(NGINX, /\(\?:\[\^\.\]\+-\)\?/)
 })
 
-test('a non-mainnet hostname has no sitemap and refuses every crawler', () => {
-  const sitemap = NGINX.slice(NGINX.indexOf('location = /sitemap.xml'))
+test('a non-mainnet hostname has no sitemap, and robots.txt is no longer this bundle’s to serve', () => {
+  const sitemap = NGINX.slice(NGINX.indexOf(`location = ${BASE}/sitemap.xml`))
   assert.match(sitemap, /if \(\$cf_env\) \{ return 404; \}/)
-  const robots = NGINX.slice(NGINX.indexOf('location = /robots.txt'))
-  assert.match(robots, /if \(\$cf_env\) \{ return 200 'User-agent: \*\\nDisallow: \/\\n'; \}/)
-  // Mainnet allows everything and points at the sitemap. This is a public reference page whose
-  // entire purpose is that a stranger with an ASIC can find it.
-  assert.match(robots, /Allow: \//)
-  assert.match(robots, /Sitemap: \$scheme:\/\/\$host\/sitemap\.xml/)
+
+  // ── THE `robots.txt` HALF OF THIS TEST IS NOW AN ABSENCE, AND THAT IS THE POINT ────────────────
+  //
+  // A crawler reads robots.txt at the ORIGIN ROOT and nowhere else. Since this surface became
+  // `/exchange` on the apex, `/exchange/robots.txt` is a file nothing fetches on any host — so the
+  // block was deleted rather than left unreachable, and `micro-site` owns the rules for this origin.
+  //
+  // Asserted as an absence rather than dropped, because a `location = /robots.txt` reappearing here
+  // would be a bundle claiming an address it does not own: whichever of the two containers the
+  // gateway happened to route would decide whether the whole apex is indexed.
+  assert.doesNotMatch(NGINX, /location\s*=\s*\/robots\.txt/)
+  assert.doesNotMatch(NGINX, new RegExp(`location\\s*=\\s*${BASE}/robots\\.txt`))
 })
 
 test('THE SITEMAP IS COMPOSED FROM $host, BECAUSE NOTHING HERE MAY NAME A HOSTNAME', () => {
@@ -119,10 +125,22 @@ test('THE SITEMAP IS COMPOSED FROM $host, BECAUSE NOTHING HERE MAY NAME A HOSTNA
   // `<loc>` — and nothing built in this repository is allowed to name a hostname, because one image
   // serves localhost, a preview deployment and both estates. nginx is the component that knows: it
   // has `$host` on every request.
-  const sitemap = NGINX.slice(NGINX.indexOf('location = /sitemap.xml'))
+  const sitemap = NGINX.slice(NGINX.indexOf(`location = ${BASE}/sitemap.xml`))
   assert.doesNotMatch(sitemap, /cloudsforge/)
+
+  // ── THE SCHEME IS A LITERAL `https` AND THE HOST IS STILL A VARIABLE ───────────────────────────
+  //
+  // `$scheme` was the defect: TLS ends at Cloudflare and every hop after it is plain HTTP, so
+  // `$scheme` is `http` for a reader who arrived over `https` and every `<loc>` advertised an
+  // address that 301s. Only the scheme is a constant; `$host` genuinely differs per request and
+  // still must, which is what lets one image serve both estates.
+  assert.doesNotMatch(sitemap, /\$scheme/)
   for (const path of ['', ...NON_INDEX_PATHS]) {
-    assert.ok(sitemap.includes(`$scheme://$host${path ? `/${path}` : ''}<`))
+    const address = publicPath(path === '' ? '/' : `/${path}`)
+    assert.ok(
+      sitemap.includes(`https://$host${address}<`),
+      `the sitemap does not carry https://$host${address}`,
+    )
   }
   // NOT `sitemapXml()` from @cloudsforge/ui: the shared generator composes every sibling as
   // `<subdomain>.$host`, which is right on the marketing site where `$host` IS the apex. Here
@@ -136,7 +154,12 @@ test('the sitemap declares its own content type rather than letting nginx guess'
   // `types { }` empties the mime table FOR THIS LOCATION so `default_type` is what applies. Without
   // it nginx maps the `.xml` in the URI to `text/xml` from its own table and the `default_type`
   // line is inert — a declaration that reads as a decision and is not one.
-  const sitemap = NGINX.slice(NGINX.indexOf('location = /sitemap.xml'), NGINX.indexOf('location = /robots.txt'))
+  const start = NGINX.indexOf(`location = ${BASE}/sitemap.xml`)
+  // Bounded by the NEXT location rather than by `location = /robots.txt`, which no longer exists in
+  // this file — `indexOf` would have returned -1 and sliced the region to nothing, and every
+  // `assert.match` below would have run against an empty string and failed for the wrong reason.
+  const nextLocation = NGINX.indexOf('    location ', start + 1)
+  const sitemap = NGINX.slice(start, nextLocation === -1 ? undefined : nextLocation)
   assert.match(sitemap, /types \{ \}/)
   assert.match(sitemap, /default_type application\/xml;/)
 })

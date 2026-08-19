@@ -299,12 +299,27 @@ test('THE ONE REMOTE ADDRESS IS COMPOSED, AND IT IS DELIBERATELY CROSS-ORIGIN', 
 
   const rpc = stripComments(read('src/lib/rpc.ts'), 'ts')
   assert.match(rpc, /export function rpcUrl\(\)/)
-  // The scheme is fixed, the environment is a SUFFIX on the first label, and the apex is whatever
-  // the page was served from. `rpc.testnet.<apex>` would be a second label, which Cloudflare's
-  // one-level Universal SSL wildcard fails to present a certificate for.
-  assert.match(rpc, /'rpc-testnet' : 'rpc'/)
-  assert.match(rpc, /`https:\/\/\$\{label\}\.\$\{apex\}`/)
-  // And the apex is the page's hostname with its first label removed, rather than a constant.
-  assert.match(rpc, /parts\.slice\(1\)\.join\('\.'\)/)
+
+  // ── IT IS COMPOSED BY THE REGISTRY NOW, NOT BY STRING SURGERY ON THE HOSTNAME ──────────────────
+  //
+  // This used to assert the three lines that BUILT the address here — `'rpc-testnet' : 'rpc'`,
+  // `https://${label}.${apex}`, and `parts.slice(1).join('.')` — which is to say it asserted that
+  // this file contained a second, private copy of the apex derivation. The copy encoded "this
+  // bundle is served from a subdomain, so drop the first label", and that stopped being true when
+  // the surface became `/exchange` on the apex: two labels, nothing to drop, `null` returned, and
+  // every page rendering "There is no chain endpoint for this address".
+  //
+  // So the assertion inverts. What matters is not HOW the address is built but that it is built
+  // from the PAGE and not written down — and the strongest way to say that is that the derivation
+  // happens exactly once in the estate, in `viewedHosts()`, which every other address on every
+  // other surface already comes from.
+  assert.match(rpc, /viewedHosts\(\)\.rpc/, 'the RPC address is not composed from the registry')
+  assert.doesNotMatch(
+    rpc,
+    /parts\.slice\(/,
+    'src/lib/rpc.ts derives the apex itself again — that is a second copy of a derivation that ' +
+      'already exists in @cloudsforge/ui, and the copies drift the moment a surface moves',
+  )
+  assert.doesNotMatch(rpc, /'rpc-testnet'/, 'the testnet label is spelled out here rather than derived')
   assert.doesNotMatch(rpc, /cloudsforge\.online/)
 })

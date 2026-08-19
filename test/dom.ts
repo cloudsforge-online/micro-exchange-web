@@ -365,7 +365,15 @@ export async function mount(element: ReactElement, options: MountOptions = {}): 
   // and `rpcUrl()` both derive from the hostname: a scenario mounted at a name the registry cannot
   // split has no chain endpoint at all, and would assert against "there is no chain endpoint for
   // this address" while appearing to test a page.
-  const url = options.url ?? 'https://exchange.cloudsforge.online/'
+  //
+  // IT IS A PATH ON THE APEX SINCE 2026-08-19, and this default is where that change is felt hardest
+  // in this repository — 73 tests failed on it at once. `exchange.cloudsforge.online` is no longer a
+  // name the registry can split: `KNOWN_SUBS` is derived from the subdomains in `SURFACES` and this
+  // surface no longer contributes one, so `cloudsforgeHosts()` treats the WHOLE name as the apex and
+  // composes every sibling one level too deep — `explorer.exchange.cloudsforge.online`. That is not
+  // a bug in the resolver; it is the resolver correctly reporting that nothing is served there any
+  // more. The old hostname is a 301 and this bundle never answers on it again.
+  const url = options.url ?? 'https://cloudsforge.online/exchange'
   const win = new Window({ url })
   const doc = win.document as unknown as Document
 

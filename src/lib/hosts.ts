@@ -108,16 +108,41 @@ export function isLocal(hostname: string): boolean {
  * optional. `lib/rpc.ts` composes the chain endpoint from this same apex, so an unregistered
  * placement is a page that cannot read a chain at all — and the honest rendering of that is the
  * notice plus the unreachable state, not a spinner.
+ *
+ * ── IT COMPARES THE WHOLE BASE URL AND NOT THE ORIGIN, AND THE MOUNT IS WHY ──────────────────────
+ *
+ * This was `new URL(estate[PRODUCT]).origin === pageOrigin` for as long as this desk was a hostname,
+ * and that comparison stopped being able to fail the day it became a folder. The registry now places
+ * this surface at the APEX — `subdomain: ''`, `basePath: '/exchange'` — so the origin it composes is
+ * whatever apex `cloudsforgeHosts()` just derived from the page's own hostname, and a preview
+ * deployment at `pr-42.example.dev` is its own apex. Origin against origin was therefore comparing a
+ * value with itself: EVERY unregistered placement in existence would have answered "registered",
+ * which is the shape of check that reads as a guard and is one only in the case it was written for.
+ * The identical defect was found in micro-journal-web in wave 1; this is the second copy.
+ *
+ * The PATH is what still carries the information. A correctly-placed bundle is served under
+ * `/exchange` — it is what `vite.config.ts`'s `base` bakes into every asset href and what the
+ * Dockerfile copies the build into — so a page whose own address is not at or beneath
+ * `estate.exchange` is a bundle whose assets cannot resolve, whatever its hostname.
+ *
+ * `=== base` OR `base + '/'`, rather than a bare `startsWith`, for the same reason the gateway rule
+ * is an alternation rather than a bare `PathPrefix`: `/exchangeable` is not inside `/exchange`.
  */
 export function isRegisteredPlacement(
-  pageOrigin: string,
+  pageUrl: string,
   hostname: string,
   estate: CloudsForgeHosts,
 ): boolean {
   if (isLocal(hostname)) return true
-  if (!pageOrigin) return true
+  if (!pageUrl) return true
   try {
-    return new URL(estate[PRODUCT]).origin === pageOrigin
+    const base = new URL(estate[PRODUCT])
+    const page = new URL(pageUrl)
+    if (page.origin !== base.origin) return false
+    const mount = base.pathname.replace(/\/$/, '')
+    if (mount === '') return true
+    const here = page.pathname.replace(/\/$/, '')
+    return here === mount || here.startsWith(`${mount}/`)
   } catch {
     return false
   }
@@ -136,7 +161,7 @@ export function pageOrigin(): string {
 /** Whether the current address is one the registry knows. Read by the shell. */
 export function placementIsKnown(): boolean {
   if (typeof window === 'undefined') return true
-  return isRegisteredPlacement(window.location.origin, window.location.hostname, cloudsforgeHosts())
+  return isRegisteredPlacement(window.location.href, window.location.hostname, cloudsforgeHosts())
 }
 
 /**
