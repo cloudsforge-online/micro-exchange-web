@@ -33,6 +33,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { ACCENT_SURFACE } from '../src/lib/hosts.ts'
 import { ROOT, SIBLINGS, read, stripComments } from './sources.ts'
+import { BASE } from '../src/lib/routes.ts'
 
 const INDEX_HTML = read('index.html')
 const HTML = stripComments(INDEX_HTML, 'html')
@@ -113,7 +114,7 @@ test('index.html links four icons and exactly one og block', () => {
 
   // The card image is RELATIVE, so it resolves against whichever origin served the page — the same
   // rule the rest of this bundle follows for hosts, and the reason one image serves every estate.
-  assert.match(HTML, /property="og:image" content="\/og-1200x630\.png"/)
+  assert.match(HTML, new RegExp(`property="og:image" content="${BASE}/og-1200x630\.png"`))
 })
 
 test('THE ACCENT SELECTOR THIS PAGE NAMES REALLY EXISTS', () => {
